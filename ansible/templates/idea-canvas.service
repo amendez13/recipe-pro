@@ -1,18 +1,18 @@
 [Unit]
-Description=Idea Canvas (FastAPI)
+Description=Recipe Pro (FastAPI)
 After=network-online.target tailscaled.service
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=admin
-Group=admin
-WorkingDirectory=/home/admin/projects/idea-canvas
+User={{ app_user }}
+Group={{ app_group }}
+WorkingDirectory={{ app_dir }}
 Environment=PYTHONUNBUFFERED=1
-ExecStart=/home/admin/projects/idea-canvas/.venv/bin/uvicorn app.app:app --host 100.84.173.75 --port 8084
+ExecStart={{ app_dir }}/.venv/bin/uvicorn app.app:app --host {{ app_host }} --port {{ app_port }}
 Restart=always
 RestartSec=10
-SyslogIdentifier=idea-canvas
+SyslogIdentifier={{ service_name }}
 
 [Install]
 WantedBy=multi-user.target

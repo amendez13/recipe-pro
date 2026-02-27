@@ -97,17 +97,16 @@ function setMessage(el, text, isError = false) {
 
 function recipeCard(recipe) {
     const article = document.createElement('article');
-    article.className = 'card';
+    article.className = 'card recipe-card';
     const checked = state.selectedRecipeIds.has(recipe.id) ? 'checked' : '';
     article.innerHTML = `
-        <label class="row gap align-center">
+        <label class="row gap align-center compact-row">
             <input data-select-recipe="${recipe.id}" type="checkbox" ${checked}>
-            <strong>${escapeHtml(recipe.title)}</strong>
+            <button type="button" class="title-link" data-open-recipe="${recipe.id}">${escapeHtml(recipe.title)}</button>
         </label>
-        <p class="muted">Servings: ${recipe.servings ?? '-'} | Prep: ${recipe.prep_time ?? '-'} | Cook: ${recipe.cook_time ?? '-'}</p>
-        <div class="row gap">
-            <button data-open-recipe="${recipe.id}">Open</button>
-            <button data-edit-recipe="${recipe.id}">Edit</button>
+        <p class="muted compact-meta">Servings: ${recipe.servings ?? '-'} | Prep: ${recipe.prep_time ?? '-'} | Cook: ${recipe.cook_time ?? '-'}</p>
+        <div class="row gap recipe-actions">
+            <button class="edit-compact" data-edit-recipe="${recipe.id}">Edit</button>
         </div>
     `;
     return article;
