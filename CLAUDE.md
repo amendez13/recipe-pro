@@ -1,55 +1,63 @@
-# CLAUDE.md for Idea Canvas
+# CLAUDE.md for Recipe Pro
 
-## Project Overview
+## Project Specification
 
-Idea Canvas is a lightweight FastAPI web application for capturing and organizing ideas.
-It follows the same patterns as other automation components deployed to Hetzner VPS.
+See **[AGENT.md](AGENT.md)** for the complete project specification including:
+- Core functionality and features
+- Database schema
+- API endpoints
+- UI views
 
-## Architecture
+## Development
 
-- **Backend**: FastAPI + Uvicorn
-- **Database**: SQLite (via sqlite3)
-- **Frontend**: Vanilla JS + CSS (SPA pattern)
-- **Deployment**: Ansible + systemd
-
-## Key Files
-
-- `app/app.py` - FastAPI application factory
-- `app/main.py` - CLI entry point (Click-based)
-- `app/config.py` - Configuration management
-- `app/database.py` - SQLite data layer
-- `app/models.py` - Data classes
-- `config/config.yaml` - Default configuration
-
-## Running Locally
+### Running Locally
 
 ```bash
-python3 -m venv .venv
+cd /home/admin/projects/idea-canvas
 source .venv/bin/activate
-pip install -r requirements.txt
-python -m app.main -c config/config.yaml -v
+python -m app.main -c config/config.local.yaml -v
 ```
 
-## Testing
+### Testing
 
 ```bash
 PYTHONPATH=. pytest tests/ -v
 ```
 
+### Project Structure
+
+```
+idea-canvas/  (Recipe Pro)
+├── app/
+│   ├── __init__.py
+│   ├── main.py          # CLI entry point
+│   ├── app.py           # FastAPI application
+│   ├── config.py        # Configuration loader
+│   ├── models.py        # Data models
+│   ├── database.py      # SQLite database layer
+│   ├── static/          # CSS and JavaScript
+│   └── templates/       # HTML templates
+├── config/
+│   ├── config.yaml      # Default configuration
+│   └── config.local.yaml # Local overrides (gitignored)
+├── tests/
+├── AGENT.md             # Project specification
+├── CLAUDE.md            # This file
+└── requirements.txt
+```
+
+## Conventions
+
+- **Config**: `config.yaml` (defaults), `config.local.yaml` (local overrides, gitignored)
+- **Database**: SQLite file, path from config
+- **Logging**: stdout via Python logging, captured by journald on VPS
+- **Ingredient normalization**: lowercase, trimmed, for deduplication
+
 ## Deployment
 
-The app is deployed via Ansible to the Hetzner VPS:
+Service: `idea-canvas.service` (port 8084, Tailscale-only)
 
 ```bash
 cd /path/to/automation/infra/hetzner
 ansible-playbook -i inventory.local.ini idea_canvas_setup.yml
 ```
-
-Service: `idea-canvas.service`
-Port: 8084 (Tailscale-only)
-
-## Conventions
-
-- Config files: `config.yaml` (default), `config.local.yaml` (local override, gitignored)
-- Logging: stdout via Python logging, captured by journald
-- Database: SQLite file at path from config

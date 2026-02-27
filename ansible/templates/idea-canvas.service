@@ -1,0 +1,18 @@
+[Unit]
+Description=Idea Canvas (FastAPI)
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=admin
+Group=admin
+WorkingDirectory=/home/admin/projects/idea-canvas
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/admin/projects/idea-canvas/.venv/bin/uvicorn app.app:app --host 100.84.173.75 --port 8084
+Restart=always
+RestartSec=10
+SyslogIdentifier=idea-canvas
+
+[Install]
+WantedBy=multi-user.target
