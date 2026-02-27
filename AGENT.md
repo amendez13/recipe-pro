@@ -7,11 +7,12 @@ Recipe Pro is a FastAPI web application for managing recipes with a focus on usa
 ## Core Functionality
 
 ### Recipe Management
-- **Add recipes** with title, instructions, and ingredients
+- **Add recipes** with title, ordered cooking steps, and ingredients
 - **Store recipes** in SQLite database
 - **Present recipes** in a fast, convenient format optimized for use while cooking
   - Large, readable text
-  - Step-by-step instructions
+  - Clearly separated step-by-step instructions
+  - Focus mode to show one step at a time with next/back controls
   - Ingredients displayed when needed (collapsible or always visible)
   - Mobile-friendly for kitchen use
 
@@ -50,12 +51,18 @@ ingredients
 recipes
 ├── id (PRIMARY KEY)
 ├── title
-├── instructions (TEXT - step by step)
+├── instructions (TEXT - compatibility field, derived from steps)
 ├── servings (optional)
 ├── prep_time (optional, minutes)
 ├── cook_time (optional, minutes)
 ├── created_at
 └── updated_at
+
+recipe_steps
+├── id (PRIMARY KEY)
+├── recipe_id (FOREIGN KEY → recipes)
+├── step_order (INTEGER, starts at 1)
+└── instruction (TEXT)
 
 recipe_ingredients (junction table)
 ├── id (PRIMARY KEY)
@@ -70,6 +77,7 @@ recipe_ingredients (junction table)
 - Ingredients are **unique references** - same ingredient used across multiple recipes points to same record
 - Ingredient names are normalized (lowercase, trimmed) for deduplication
 - Recipe-ingredient relationship is many-to-many via junction table
+- Recipe steps are persisted in order and rendered as discrete steps
 
 ## API Endpoints
 
@@ -112,7 +120,7 @@ recipe_ingredients (junction table)
 
 ### Add/Edit Recipe
 - Title input
-- Instructions textarea (or step-by-step entry)
+- Step-by-step entry (add/remove step rows)
 - Ingredient entry with autocomplete from existing ingredients
 - Dynamic add/remove ingredient rows
 

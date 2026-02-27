@@ -9,7 +9,10 @@
 <body>
     <header class="site-header">
         <div class="shell">
-            <h1>Recipe Pro</h1>
+            <div class="brand-block">
+                <h1>Recipe Pro</h1>
+                <p>Comfort cooking, beautifully organized.</p>
+            </div>
             <nav class="nav-actions">
                 <button data-route="list">Recipes</button>
                 <button data-route="add">Add Recipe</button>
@@ -40,10 +43,21 @@
                 <aside class="ingredients-panel">
                     <h3>Ingredients</h3>
                     <ul id="detail-ingredients"></ul>
+                    <section id="focus-mode-panel" class="focus-mode hidden">
+                        <p id="focus-step-counter" class="muted"></p>
+                        <div id="focus-step-text" class="focus-step-text"></div>
+                        <div class="row gap">
+                            <button id="focus-prev" type="button" class="focus-nav-btn">Back</button>
+                            <button id="focus-next" type="button" class="focus-nav-btn">Next</button>
+                        </div>
+                    </section>
                 </aside>
                 <article>
-                    <h3>Instructions</h3>
-                    <ol id="detail-steps"></ol>
+                    <div class="row between gap align-center">
+                        <h3>Steps</h3>
+                        <button id="toggle-focus-mode" type="button">Focus Mode</button>
+                    </div>
+                    <ol id="detail-steps" class="step-list"></ol>
                 </article>
             </div>
             <div class="row gap">
@@ -59,7 +73,11 @@
             <h2 id="form-title">Add Recipe</h2>
             <form id="recipe-form" class="stack">
                 <label>Title<input id="f-title" required></label>
-                <label>Instructions<textarea id="f-instructions" rows="8" required></textarea></label>
+                <div class="row between gap align-center">
+                    <h3>Steps</h3>
+                    <button type="button" id="add-step-row">Add Step</button>
+                </div>
+                <div id="step-rows" class="stack"></div>
                 <div class="row gap responsive">
                     <label>Servings<input id="f-servings" type="number" min="1"></label>
                     <label>Prep Time (min)<input id="f-prep" type="number" min="0"></label>

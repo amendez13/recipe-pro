@@ -4,7 +4,7 @@ from app.database import RecipeDatabase
 def recipe_payload(title: str = "Pasta") -> dict:
     return {
         "title": title,
-        "instructions": "Boil water\nCook pasta",
+        "steps": ["Boil water", "Cook pasta"],
         "servings": 2,
         "prep_time": 10,
         "cook_time": 15,
@@ -30,6 +30,7 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
     created = db.create_recipe(recipe_payload())
     assert created.id is not None
     assert len(created.ingredients) == 2
+    assert [step.instruction for step in created.steps] == ["Boil water", "Cook pasta"]
 
     loaded = db.get_recipe_by_id(created.id)
     assert loaded is not None
@@ -40,7 +41,7 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
         created.id,
         {
             "title": "Better Pasta",
-            "instructions": "Step 1",
+            "steps": ["Step 1"],
             "servings": 3,
             "prep_time": 12,
             "cook_time": 18,
@@ -52,6 +53,7 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
     )
     assert updated is not None
     assert updated.title == "Better Pasta"
+    assert [step.instruction for step in updated.steps] == ["Step 1"]
     assert {i.ingredient.name for i in updated.ingredients if i.ingredient} == {"pasta", "garlic"}
 
     deleted = db.delete_recipe(created.id)
@@ -64,7 +66,7 @@ def test_shopping_list_mixed_units_and_empty_input(tmp_path):
     r1 = db.create_recipe(
         {
             "title": "Soup",
-            "instructions": "Cook",
+            "steps": ["Cook"],
             "ingredients": [
                 {"name": "Onion", "quantity": 1, "unit": "piece", "category": "produce"},
                 {"name": "Salt", "quantity": 1, "unit": "tsp", "category": "pantry"},
@@ -74,7 +76,7 @@ def test_shopping_list_mixed_units_and_empty_input(tmp_path):
     r2 = db.create_recipe(
         {
             "title": "Stew",
-            "instructions": "Cook",
+            "steps": ["Cook"],
             "ingredients": [
                 {"name": "Onion", "quantity": 200, "unit": "g", "category": "produce"},
                 {"name": "Salt", "quantity": 2, "unit": "tsp", "category": "pantry"},
@@ -98,7 +100,7 @@ def test_suggestions_ranking_and_no_match_behavior(tmp_path):
     pasta = db.create_recipe(
         {
             "title": "Pasta",
-            "instructions": "Cook",
+            "steps": ["Cook"],
             "ingredients": [
                 {"name": "Pasta", "quantity": 1, "unit": "box", "category": "pantry"},
                 {"name": "Egg", "quantity": 2, "unit": "piece", "category": "dairy"},
@@ -108,7 +110,7 @@ def test_suggestions_ranking_and_no_match_behavior(tmp_path):
     omelet = db.create_recipe(
         {
             "title": "Omelet",
-            "instructions": "Cook",
+            "steps": ["Cook"],
             "ingredients": [
                 {"name": "Egg", "quantity": 3, "unit": "piece", "category": "dairy"},
                 {"name": "Milk", "quantity": 100, "unit": "ml", "category": "dairy"},
@@ -125,3 +127,15 @@ def test_suggestions_ranking_and_no_match_behavior(tmp_path):
 
     no_match = db.get_recipe_suggestions([99999])
     assert no_match == []
+
+
+def test_recipe_steps_fallback_from_instructions(tmp_path):
+    db = RecipeDatabase(tmp_path / "test.db")
+    created = db.create_recipe(
+        {
+            "title": "Legacy Recipe",
+            "instructions": "First line\nSecond line",
+            "ingredients": [{"name": "Salt", "quantity": 1, "unit": "tsp", "category": "pantry"}],
+        }
+    )
+    assert [step.instruction for step in created.steps] == ["First line", "Second line"]

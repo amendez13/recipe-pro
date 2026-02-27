@@ -17,7 +17,7 @@ def client(tmp_path):
 def create_recipe(client: TestClient, title: str = "Pasta") -> dict:
     payload = {
         "title": title,
-        "instructions": "Step 1\nStep 2",
+        "steps": ["Step 1", "Step 2"],
         "servings": 2,
         "prep_time": 10,
         "cook_time": 20,
@@ -51,10 +51,11 @@ def test_recipe_crud_and_search(client):
     detail_resp = client.get(f"/api/recipes/{created['id']}")
     assert detail_resp.status_code == 200
     assert len(detail_resp.json()["ingredients"]) == 2
+    assert detail_resp.json()["steps"] == ["Step 1", "Step 2"]
 
     update_payload = {
         "title": "Pasta Deluxe",
-        "instructions": "Step 1",
+        "steps": ["Step 1 revised"],
         "servings": 4,
         "prep_time": 12,
         "cook_time": 25,
@@ -63,6 +64,7 @@ def test_recipe_crud_and_search(client):
     update_resp = client.put(f"/api/recipes/{created['id']}", json=update_payload)
     assert update_resp.status_code == 200
     assert update_resp.json()["title"] == "Pasta Deluxe"
+    assert update_resp.json()["steps"] == ["Step 1 revised"]
 
     delete_resp = client.delete(f"/api/recipes/{created['id']}")
     assert delete_resp.status_code == 200
@@ -74,7 +76,7 @@ def test_recipe_crud_and_search(client):
 def test_recipe_validation_error(client):
     response = client.post(
         "/api/recipes",
-        json={"title": "", "instructions": "", "ingredients": []},
+        json={"title": "", "steps": [], "ingredients": []},
     )
     assert response.status_code == 422
 

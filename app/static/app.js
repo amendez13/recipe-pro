@@ -7,6 +7,8 @@ const state = {
     ingredients: [],
     editRecipeId: null,
     detailRecipeId: null,
+    focusMode: false,
+    focusStepIndex: 0,
 };
 
 const api = {
@@ -172,6 +174,13 @@ function splitInstructions(instructions) {
         .filter(Boolean);
 }
 
+function getRecipeSteps(recipe) {
+    if (Array.isArray(recipe.steps) && recipe.steps.length > 0) {
+        return recipe.steps.map((step) => String(step).trim()).filter(Boolean);
+    }
+    return splitInstructions(recipe.instructions);
+}
+
 async function renderDetailView(recipeId) {
     root.innerHTML = '';
     const node = document.getElementById('detail-view-template').content.cloneNode(true);
@@ -181,9 +190,14 @@ async function renderDetailView(recipeId) {
     const titleEl = document.getElementById('detail-title');
     const ingredientsEl = document.getElementById('detail-ingredients');
     const stepsEl = document.getElementById('detail-steps');
+    const focusPanelEl = document.getElementById('focus-mode-panel');
+    const focusCounterEl = document.getElementById('focus-step-counter');
+    const focusTextEl = document.getElementById('focus-step-text');
 
     try {
         const recipe = await api.getRecipe(recipeId);
+        const steps = getRecipeSteps(recipe);
+        state.focusStepIndex = 0;
         titleEl.textContent = recipe.title;
         metaEl.textContent = `Servings: ${recipe.servings ?? '-'} | Prep: ${recipe.prep_time ?? '-'} min | Cook: ${recipe.cook_time ?? '-'} min`;
 
@@ -196,11 +210,82 @@ async function renderDetailView(recipeId) {
         });
 
         stepsEl.innerHTML = '';
-        splitInstructions(recipe.instructions).forEach((step) => {
+        steps.forEach((step, index) => {
             const li = document.createElement('li');
-            li.textContent = step;
+            li.innerHTML = `<strong>Step ${index + 1}</strong><p>${escapeHtml(step)}</p>`;
             stepsEl.appendChild(li);
         });
+
+        function renderFocusStep() {
+            if (!steps.length) {
+                focusCounterEl.textContent = 'No steps available';
+                focusTextEl.textContent = '';
+                document.getElementById('focus-prev').disabled = true;
+                document.getElementById('focus-next').disabled = true;
+                return;
+            }
+            if (state.focusStepIndex < 0) {
+                state.focusStepIndex = 0;
+            }
+            if (state.focusStepIndex >= steps.length) {
+                state.focusStepIndex = steps.length - 1;
+            }
+            const index = state.focusStepIndex;
+            focusCounterEl.textContent = `Step ${index + 1} of ${steps.length}`;
+            focusTextEl.textContent = steps[index];
+            document.getElementById('focus-prev').disabled = index === 0;
+            document.getElementById('focus-next').disabled = index === steps.length - 1;
+        }
+
+        function renderFocusVisibility() {
+            if (state.focusMode) {
+                focusPanelEl.classList.remove('hidden');
+            } else {
+                focusPanelEl.classList.add('hidden');
+            }
+        }
+
+        renderFocusStep();
+        renderFocusVisibility();
+
+        document.getElementById('toggle-focus-mode').addEventListener('click', () => {
+            state.focusMode = !state.focusMode;
+            renderFocusVisibility();
+        });
+        function goPrevStep() {
+            state.focusStepIndex -= 1;
+            renderFocusStep();
+        }
+
+        function goNextStep() {
+            state.focusStepIndex += 1;
+            renderFocusStep();
+        }
+
+        document.getElementById('focus-prev').addEventListener('click', goPrevStep);
+        document.getElementById('focus-next').addEventListener('click', goNextStep);
+
+        let touchStartX = 0;
+        let touchStartY = 0;
+        focusPanelEl.addEventListener('touchstart', (event) => {
+            const touch = event.changedTouches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+        }, { passive: true });
+        focusPanelEl.addEventListener('touchend', (event) => {
+            const touch = event.changedTouches[0];
+            const dx = touch.clientX - touchStartX;
+            const dy = touch.clientY - touchStartY;
+            const isHorizontalSwipe = Math.abs(dx) > 45 && Math.abs(dx) > Math.abs(dy);
+            if (!isHorizontalSwipe) {
+                return;
+            }
+            if (dx < 0) {
+                goNextStep();
+            } else {
+                goPrevStep();
+            }
+        }, { passive: true });
 
         document.getElementById('edit-recipe').addEventListener('click', () => nav('edit', { id: recipe.id }));
         document.getElementById('delete-recipe').addEventListener('click', async () => {
@@ -232,6 +317,17 @@ function ingredientRow(initial = {}) {
     return row;
 }
 
+function stepRow(initialStep = '') {
+    const row = document.createElement('div');
+    row.className = 'row gap align-center step-row';
+    row.innerHTML = `
+        <textarea class="s-text" rows="2" placeholder="Describe this step..." required>${escapeHtml(initialStep)}</textarea>
+        <button type="button" class="danger remove-step">Remove</button>
+    `;
+    row.querySelector('.remove-step').addEventListener('click', () => row.remove());
+    return row;
+}
+
 function collectFormPayload() {
     const ingredients = [];
     document.querySelectorAll('.ingredient-row').forEach((row) => {
@@ -250,9 +346,18 @@ function collectFormPayload() {
         });
     });
 
+    const steps = [];
+    document.querySelectorAll('.step-row').forEach((row) => {
+        const instruction = row.querySelector('.s-text').value.trim();
+        if (instruction) {
+            steps.push(instruction);
+        }
+    });
+
     return {
         title: document.getElementById('f-title').value.trim(),
-        instructions: document.getElementById('f-instructions').value.trim(),
+        instructions: steps.join('\n'),
+        steps,
         servings: Number(document.getElementById('f-servings').value) || null,
         prep_time: Number(document.getElementById('f-prep').value) || null,
         cook_time: Number(document.getElementById('f-cook').value) || null,
@@ -267,11 +372,15 @@ async function renderFormView(recipeId = null) {
 
     const form = document.getElementById('recipe-form');
     const rowsEl = document.getElementById('ingredient-rows');
+    const stepRowsEl = document.getElementById('step-rows');
     const messageEl = document.getElementById('form-message');
     const titleEl = document.getElementById('form-title');
 
     document.getElementById('add-ingredient-row').addEventListener('click', () => {
         rowsEl.appendChild(ingredientRow());
+    });
+    document.getElementById('add-step-row').addEventListener('click', () => {
+        stepRowsEl.appendChild(stepRow());
     });
     document.getElementById('cancel-form').addEventListener('click', () => nav('list'));
 
@@ -279,11 +388,12 @@ async function renderFormView(recipeId = null) {
         titleEl.textContent = 'Edit Recipe';
         try {
             const recipe = await api.getRecipe(recipeId);
+            const steps = getRecipeSteps(recipe);
             document.getElementById('f-title').value = recipe.title;
-            document.getElementById('f-instructions').value = recipe.instructions;
             document.getElementById('f-servings').value = recipe.servings ?? '';
             document.getElementById('f-prep').value = recipe.prep_time ?? '';
             document.getElementById('f-cook').value = recipe.cook_time ?? '';
+            steps.forEach((step) => stepRowsEl.appendChild(stepRow(step)));
             if (recipe.ingredients.length) {
                 recipe.ingredients.forEach((item) => rowsEl.appendChild(ingredientRow({
                     name: item.ingredient?.name || '',
@@ -301,12 +411,15 @@ async function renderFormView(recipeId = null) {
     if (!rowsEl.children.length) {
         rowsEl.appendChild(ingredientRow());
     }
+    if (!stepRowsEl.children.length) {
+        stepRowsEl.appendChild(stepRow());
+    }
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
         const payload = collectFormPayload();
-        if (!payload.title || !payload.instructions) {
-            setMessage(messageEl, 'Title and instructions are required.', true);
+        if (!payload.title || payload.steps.length === 0) {
+            setMessage(messageEl, 'Title and at least one step are required.', true);
             return;
         }
 

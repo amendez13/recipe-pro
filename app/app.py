@@ -9,7 +9,7 @@ from typing import Any, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from .config import Config, get_default_config_path, load_config
 from .database import RecipeDatabase
@@ -32,11 +32,22 @@ class IngredientInput(BaseModel):
 
 class RecipePayload(BaseModel):
     title: str = Field(min_length=1)
-    instructions: str = Field(min_length=1)
+    instructions: str = ""
+    steps: list[str] = Field(default_factory=list)
     servings: Optional[int] = Field(default=None, ge=1)
     prep_time: Optional[int] = Field(default=None, ge=0)
     cook_time: Optional[int] = Field(default=None, ge=0)
     ingredients: list[IngredientInput] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_instructions_or_steps(self) -> "RecipePayload":
+        normalized_steps = [step.strip() for step in self.steps if isinstance(step, str) and step.strip()]
+        if normalized_steps:
+            self.steps = normalized_steps
+            return self
+        if self.instructions.strip():
+            return self
+        raise ValueError("Provide recipe steps or instructions")
 
 
 class RecipeIdsPayload(BaseModel):

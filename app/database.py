@@ -5,11 +5,11 @@ from __future__ import annotations
 import logging
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generator, Optional
 
-from .models import Ingredient, Recipe, RecipeIngredient
+from .models import Ingredient, Recipe, RecipeIngredient, RecipeStep
 
 logger = logging.getLogger(__name__)
 
@@ -74,6 +74,18 @@ class RecipeDatabase:
             )
             conn.execute(
                 """
+                CREATE TABLE IF NOT EXISTS recipe_steps (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    recipe_id INTEGER NOT NULL,
+                    step_order INTEGER NOT NULL,
+                    instruction TEXT NOT NULL,
+                    FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
+                    UNIQUE(recipe_id, step_order)
+                )
+                """
+            )
+            conn.execute(
+                """
                 CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_recipe_id
                 ON recipe_ingredients(recipe_id)
                 """
@@ -82,6 +94,12 @@ class RecipeDatabase:
                 """
                 CREATE INDEX IF NOT EXISTS idx_recipe_ingredients_ingredient_id
                 ON recipe_ingredients(ingredient_id)
+                """
+            )
+            conn.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_recipe_steps_recipe_id
+                ON recipe_steps(recipe_id)
                 """
             )
             conn.execute(
@@ -95,6 +113,18 @@ class RecipeDatabase:
     @staticmethod
     def _normalize_ingredient_name(name: str) -> str:
         return name.strip().lower()
+
+    @staticmethod
+    def _parse_steps_from_instructions(instructions: str) -> list[str]:
+        return [line.strip() for line in instructions.splitlines() if line.strip()]
+
+    def _extract_steps(self, recipe_data: dict[str, Any]) -> list[str]:
+        raw_steps = recipe_data.get("steps")
+        if isinstance(raw_steps, list):
+            steps = [str(step).strip() for step in raw_steps if str(step).strip()]
+            if steps:
+                return steps
+        return self._parse_steps_from_instructions(str(recipe_data.get("instructions", "")))
 
     def get_or_create_ingredient(
         self,
@@ -170,8 +200,10 @@ class RecipeDatabase:
         return [Recipe.from_row(dict(row)) for row in rows]
 
     def create_recipe(self, recipe_data: dict[str, Any]) -> Recipe:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         ingredients_payload = recipe_data.get("ingredients", [])
+        steps_payload = self._extract_steps(recipe_data)
+        instructions_text = "\n".join(steps_payload)
 
         with self._connect() as conn:
             cursor = conn.execute(
@@ -181,7 +213,7 @@ class RecipeDatabase:
                 """,
                 (
                     recipe_data.get("title", ""),
-                    recipe_data.get("instructions", ""),
+                    instructions_text,
                     recipe_data.get("servings"),
                     recipe_data.get("prep_time"),
                     recipe_data.get("cook_time"),
@@ -210,6 +242,15 @@ class RecipeDatabase:
                         item.get("unit", ""),
                         item.get("notes"),
                     ),
+                )
+
+            for index, instruction in enumerate(steps_payload, start=1):
+                conn.execute(
+                    """
+                    INSERT INTO recipe_steps (recipe_id, step_order, instruction)
+                    VALUES (?, ?, ?)
+                    """,
+                    (recipe_id, index, instruction),
                 )
             conn.commit()
 
@@ -260,6 +301,18 @@ class RecipeDatabase:
         ).fetchall()
         return [RecipeIngredient.from_row(dict(row)) for row in rows]
 
+    def _get_recipe_steps(self, conn: sqlite3.Connection, recipe_id: int) -> list[RecipeStep]:
+        rows = conn.execute(
+            """
+            SELECT id, recipe_id, step_order, instruction
+            FROM recipe_steps
+            WHERE recipe_id = ?
+            ORDER BY step_order ASC
+            """,
+            (recipe_id,),
+        ).fetchall()
+        return [RecipeStep.from_row(dict(row)) for row in rows]
+
     def get_recipe_by_id(self, recipe_id: int) -> Optional[Recipe]:
         with self._connect() as conn:
             row = conn.execute(
@@ -275,11 +328,20 @@ class RecipeDatabase:
 
             recipe = Recipe.from_row(dict(row))
             recipe.ingredients = self._get_recipe_ingredients(conn, recipe_id)
+            recipe.steps = self._get_recipe_steps(conn, recipe_id)
+            if not recipe.steps:
+                parsed = self._parse_steps_from_instructions(recipe.instructions)
+                recipe.steps = [
+                    RecipeStep(recipe_id=recipe.id, step_order=index, instruction=instruction)
+                    for index, instruction in enumerate(parsed, start=1)
+                ]
             return recipe
 
     def update_recipe(self, recipe_id: int, recipe_data: dict[str, Any]) -> Optional[Recipe]:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         ingredients_payload = recipe_data.get("ingredients", [])
+        steps_payload = self._extract_steps(recipe_data)
+        instructions_text = "\n".join(steps_payload)
 
         with self._connect() as conn:
             existing = conn.execute("SELECT id FROM recipes WHERE id = ?", (recipe_id,)).fetchone()
@@ -294,7 +356,7 @@ class RecipeDatabase:
                 """,
                 (
                     recipe_data.get("title", ""),
-                    recipe_data.get("instructions", ""),
+                    instructions_text,
                     recipe_data.get("servings"),
                     recipe_data.get("prep_time"),
                     recipe_data.get("cook_time"),
@@ -304,6 +366,7 @@ class RecipeDatabase:
             )
 
             conn.execute("DELETE FROM recipe_ingredients WHERE recipe_id = ?", (recipe_id,))
+            conn.execute("DELETE FROM recipe_steps WHERE recipe_id = ?", (recipe_id,))
 
             for item in ingredients_payload:
                 ingredient = self.get_or_create_ingredient(
@@ -324,6 +387,15 @@ class RecipeDatabase:
                         item.get("unit", ""),
                         item.get("notes"),
                     ),
+                )
+
+            for index, instruction in enumerate(steps_payload, start=1):
+                conn.execute(
+                    """
+                    INSERT INTO recipe_steps (recipe_id, step_order, instruction)
+                    VALUES (?, ?, ?)
+                    """,
+                    (recipe_id, index, instruction),
                 )
 
             conn.commit()

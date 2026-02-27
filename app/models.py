@@ -74,6 +74,31 @@ class RecipeIngredient:
 
 
 @dataclass
+class RecipeStep:
+    id: Optional[int] = None
+    recipe_id: Optional[int] = None
+    step_order: int = 1
+    instruction: str = ""
+
+    @classmethod
+    def from_row(cls, row: dict) -> "RecipeStep":
+        return cls(
+            id=row.get("id"),
+            recipe_id=row.get("recipe_id"),
+            step_order=int(row.get("step_order") or 1),
+            instruction=row.get("instruction", ""),
+        )
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id,
+            "recipe_id": self.recipe_id,
+            "step_order": self.step_order,
+            "instruction": self.instruction,
+        }
+
+
+@dataclass
 class Recipe:
     id: Optional[int] = None
     title: str = ""
@@ -84,6 +109,7 @@ class Recipe:
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     ingredients: list[RecipeIngredient] = field(default_factory=list)
+    steps: list[RecipeStep] = field(default_factory=list)
 
     @classmethod
     def from_row(cls, row: dict) -> "Recipe":
@@ -111,6 +137,7 @@ class Recipe:
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "ingredients": [item.to_dict() for item in self.ingredients],
+            "steps": [step.instruction for step in self.steps],
         }
 
 
