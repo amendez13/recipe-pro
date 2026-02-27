@@ -1,4 +1,4 @@
-"""CLI entrypoint for Idea Canvas."""
+"""CLI entrypoint for Recipe Pro."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from .config import get_default_config_path, load_config
 )
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose logging")
 def main(config_path: Path | None, verbose: bool) -> None:
-    """Run the Idea Canvas FastAPI app."""
+    """Run the Recipe Pro FastAPI app."""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(
         level=level,

@@ -1,91 +1,89 @@
-# Idea Canvas
+# Recipe Pro
 
-A FastAPI web app for capturing and organizing ideas. Accessible only within your Tailscale network.
+Recipe Pro is a FastAPI + SQLite web app for managing recipes, cooking from a readable detail view, generating shopping lists, and finding recipes by available ingredients.
 
 ## Features
 
-- Create, edit, and delete ideas
-- Organize by categories
-- Tag ideas for easy filtering
-- Full-text search
-- Light/dark theme support
-- Responsive design
+- Recipe CRUD with normalized shared ingredients
+- Cooking Mode recipe detail with clear steps and ingredient panel
+- Shopping list generation from selected recipes
+- Recipe suggestions based on selected ingredients
+- Ingredient and stats endpoints for UI dashboards
 
-## Quick Start
-
-### Local Development
+## Run
 
 ```bash
-# Create virtual environment
 python3 -m venv .venv
 source .venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
-
-# Run the app
-python -m app.main -c config/config.yaml -v
+python -m app.main -c config/config.local.yaml -v
 ```
 
-Open http://127.0.0.1:8084/ in your browser.
-
-### Deploy to VPS
-
-```bash
-cd /path/to/automation/infra/hetzner
-ansible-playbook -i inventory.local.ini idea_canvas_setup.yml
-```
+App URL (local config): `http://100.84.173.75:8084/`
 
 ## Configuration
 
-Config file: `config/config.yaml` (default) or `config/config.local.yaml` (local override)
+Config files:
+
+- `config/config.local.yaml` (preferred local override)
+- `config/config.yaml` (default)
+
+Example:
 
 ```yaml
 web:
-  host: "127.0.0.1"
+  host: "100.84.173.75"
   port: 8084
 
 database:
-  path: "data/ideas.db"
+  path: "/home/admin/projects/idea-canvas/data/ideas.db"
 ```
 
-## API Reference
+## API Summary
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/api/ideas` | GET | List all ideas |
-| `/api/ideas` | POST | Create new idea |
-| `/api/ideas/{id}` | GET | Get idea by ID |
-| `/api/ideas/{id}` | PUT | Update idea |
-| `/api/ideas/{id}` | DELETE | Delete idea |
-| `/api/categories` | GET | List categories |
-| `/api/search?q=` | GET | Search ideas |
-| `/api/stats` | GET | Get statistics |
-| `/health` | GET | Health check |
+### Recipes
 
-## Project Structure
+- `GET /api/recipes?search=<term>`
+- `POST /api/recipes`
+- `GET /api/recipes/{id}`
+- `PUT /api/recipes/{id}`
+- `DELETE /api/recipes/{id}`
 
-```
-idea-canvas/
-├── app/
-│   ├── __init__.py
-│   ├── main.py          # CLI entry point
-│   ├── app.py           # FastAPI application
-│   ├── config.py        # Configuration loader
-│   ├── models.py        # Data models
-│   ├── database.py      # SQLite database layer
-│   ├── static/          # CSS and JavaScript
-│   └── templates/       # HTML templates
-├── config/
-│   └── config.yaml      # Default configuration
-├── ansible/
-│   └── templates/       # Ansible templates
-├── tests/               # Test files
-├── docs/                # Documentation
-├── requirements.txt
-└── README.md
+### Ingredients and Stats
+
+- `GET /api/ingredients`
+- `GET /api/ingredients/{id}/recipes`
+- `GET /api/stats`
+
+### Shopping and Suggestions
+
+- `POST /api/shopping-list`
+- `POST /api/suggestions`
+
+### Health
+
+- `GET /health`
+
+## Test
+
+```bash
+source .venv/bin/activate
+pytest -q
 ```
 
-## License
+## Architecture Docs
 
-MIT
+- `docs/architecture.md`
+- `docs/deployment.md`
+
+## Deployment
+
+Systemd (same VPS, Tailscale network):
+
+- unit template: `ansible/templates/idea-canvas.service`
+- restart service:
+
+```bash
+sudo systemctl restart idea-canvas
+sudo systemctl status idea-canvas --no-pager
+```
