@@ -88,11 +88,19 @@ def test_ingredient_endpoints_and_404(client):
     assert ingredients.status_code == 200
     body = ingredients.json()
     assert len(body) >= 1
+    assert "default_available" in body[0]
 
     ingredient_id = body[0]["id"]
     recipes = client.get(f"/api/ingredients/{ingredient_id}/recipes")
     assert recipes.status_code == 200
     assert len(recipes.json()) >= 1
+
+    preference = client.post(
+        f"/api/ingredients/{ingredient_id}/default",
+        json={"default_available": True},
+    )
+    assert preference.status_code == 200
+    assert preference.json()["default_available"] is True
 
     missing = client.get("/api/ingredients/999999/recipes")
     assert missing.status_code == 404

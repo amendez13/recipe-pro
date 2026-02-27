@@ -53,6 +53,13 @@ const api = {
     getIngredients() {
         return this.request('/api/ingredients');
     },
+    updateIngredientPreference(id, payload) {
+        return this.request(`/api/ingredients/${id}/default`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
     getShoppingList(recipe_ids) {
         return this.request('/api/shopping-list', {
             method: 'POST',
@@ -437,10 +444,17 @@ async function renderShoppingView() {
     const selectionMetaEl = document.getElementById('shopping-selection-meta');
 
     let availableRecipes = [];
+    let currentSearchResults = [];
+    let highlightedSearchIndex = -1;
 
     function renderSelectionMeta() {
         const count = state.shoppingRecipeIds.size;
-        selectionMetaEl.textContent = `${count}/10 recipes selected`;
+        const atLimit = count >= 10;
+        selectionMetaEl.textContent = atLimit
+            ? `${count}/10 recipes selected (max reached)`
+            : `${count}/10 recipes selected`;
+        selectionMetaEl.classList.toggle('limit-hit', atLimit);
+        selectedEl.classList.toggle('limit-hit', atLimit);
     }
 
     function getFilteredRecipes(searchTerm = '') {
@@ -485,7 +499,15 @@ async function renderShoppingView() {
 
     function renderSearchResults(searchTerm = '') {
         const filtered = getFilteredRecipes(searchTerm);
+        currentSearchResults = filtered;
         resultsEl.innerHTML = '';
+        if (!filtered.length) {
+            highlightedSearchIndex = -1;
+        } else if (highlightedSearchIndex >= filtered.length) {
+            highlightedSearchIndex = filtered.length - 1;
+        } else if (highlightedSearchIndex < 0) {
+            highlightedSearchIndex = 0;
+        }
         if (!filtered.length) {
             resultsEl.innerHTML = '<p class="muted">No matching recipes available.</p>';
             return;
@@ -496,6 +518,9 @@ async function renderShoppingView() {
             item.className = 'recipe-search-item';
             item.dataset.shoppingPickRecipeId = String(recipe.id);
             item.textContent = recipe.title;
+            if (currentSearchResults[highlightedSearchIndex]?.id === recipe.id) {
+                item.classList.add('active-search-item');
+            }
             resultsEl.appendChild(item);
         });
         resultsEl.querySelectorAll('[data-shopping-pick-recipe-id]').forEach((button) => {
@@ -507,6 +532,7 @@ async function renderShoppingView() {
                 }
                 state.shoppingRecipeIds.add(recipeId);
                 searchEl.value = '';
+                highlightedSearchIndex = 0;
                 renderSelectionMeta();
                 renderSelectedFilters();
                 renderSearchResults('');
@@ -580,7 +606,50 @@ async function renderShoppingView() {
         loadList();
     });
 
-    searchEl.addEventListener('input', () => renderSearchResults(searchEl.value));
+    searchEl.addEventListener('input', () => {
+        highlightedSearchIndex = 0;
+        renderSearchResults(searchEl.value);
+    });
+    searchEl.addEventListener('keydown', (event) => {
+        if (!currentSearchResults.length) {
+            return;
+        }
+        if (event.key === 'ArrowDown') {
+            event.preventDefault();
+            highlightedSearchIndex = Math.min(highlightedSearchIndex + 1, currentSearchResults.length - 1);
+            renderSearchResults(searchEl.value);
+            return;
+        }
+        if (event.key === 'ArrowUp') {
+            event.preventDefault();
+            highlightedSearchIndex = Math.max(highlightedSearchIndex - 1, 0);
+            renderSearchResults(searchEl.value);
+            return;
+        }
+        if (event.key === 'Escape') {
+            searchEl.value = '';
+            highlightedSearchIndex = 0;
+            renderSearchResults('');
+            return;
+        }
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            const highlighted = currentSearchResults[highlightedSearchIndex];
+            if (!highlighted) {
+                return;
+            }
+            if (state.shoppingRecipeIds.size >= 10) {
+                setMessage(messageEl, 'You can select up to 10 recipes.', true);
+                return;
+            }
+            state.shoppingRecipeIds.add(highlighted.id);
+            searchEl.value = '';
+            highlightedSearchIndex = 0;
+            renderSelectionMeta();
+            renderSelectedFilters();
+            renderSearchResults('');
+        }
+    });
 
     try {
         availableRecipes = await api.getRecipes();
@@ -602,27 +671,66 @@ async function renderFinderView() {
     const ingredientsEl = document.getElementById('finder-ingredients');
     const resultsEl = document.getElementById('finder-results');
     const messageEl = document.getElementById('finder-message');
+    const toggleBtn = document.getElementById('finder-toggle-mode');
+    const selectPanelEl = document.getElementById('finder-select-panel');
+    const resultsPanelEl = document.getElementById('finder-results-panel');
+    let suggestionsMode = false;
+    let suggestionsDebounce = null;
+
+    function renderFinderMode() {
+        if (suggestionsMode) {
+            selectPanelEl.classList.add('hidden');
+            resultsPanelEl.classList.remove('hidden');
+            toggleBtn.textContent = 'Show Ingredient List';
+        } else {
+            selectPanelEl.classList.remove('hidden');
+            resultsPanelEl.classList.add('hidden');
+            toggleBtn.textContent = 'Show Suggestions';
+        }
+    }
+
+    toggleBtn.addEventListener('click', () => {
+        suggestionsMode = !suggestionsMode;
+        renderFinderMode();
+    });
 
     try {
         state.ingredients = await api.getIngredients();
         if (!state.ingredients.length) {
             setMessage(messageEl, 'No ingredients available yet. Create recipes first.');
+            suggestionsMode = true;
+            renderFinderMode();
             return;
         }
         ingredientsEl.innerHTML = '';
         state.ingredients.forEach((ingredient) => {
+            const checked = ingredient.default_available ? 'checked' : '';
             const label = document.createElement('label');
-            label.className = 'chip';
-            label.innerHTML = `<input type="checkbox" value="${ingredient.id}"> ${escapeHtml(ingredient.name)}`;
+            label.className = 'chip ingredient-chip';
+            label.innerHTML = `<input type="checkbox" value="${ingredient.id}" ${checked}> ${escapeHtml(ingredient.name)}`;
             ingredientsEl.appendChild(label);
         });
+        ingredientsEl.querySelectorAll('input[type="checkbox"]').forEach((input) => {
+            input.addEventListener('change', () => {
+                clearTimeout(suggestionsDebounce);
+                suggestionsDebounce = setTimeout(() => {
+                    loadSuggestions();
+                }, 250);
+            });
+        });
+        loadSuggestions();
     } catch (err) {
         setMessage(messageEl, `Failed to load ingredients: ${err.message}`, true);
         return;
     }
 
-    document.getElementById('find-recipes').addEventListener('click', async () => {
+    async function loadSuggestions() {
         const selected = Array.from(ingredientsEl.querySelectorAll('input:checked')).map((el) => Number(el.value));
+        if (!selected.length) {
+            resultsEl.innerHTML = '';
+            setMessage(messageEl, 'Select ingredients to see matching recipes.');
+            return;
+        }
         try {
             const data = await api.getSuggestions(selected);
             resultsEl.innerHTML = '';
@@ -649,7 +757,67 @@ async function renderFinderView() {
         } catch (err) {
             setMessage(messageEl, `Suggestions failed: ${err.message}`, true);
         }
-    });
+    }
+
+    renderFinderMode();
+}
+
+async function renderIngredientsView() {
+    root.innerHTML = '';
+    const node = document.getElementById('ingredients-view-template').content.cloneNode(true);
+    root.appendChild(node);
+
+    const listEl = document.getElementById('ingredient-default-list');
+    const messageEl = document.getElementById('ingredient-default-message');
+    const searchEl = document.getElementById('ingredient-default-search');
+    let ingredients = [];
+
+    function renderList(search = '') {
+        const term = search.trim().toLowerCase();
+        const filtered = ingredients.filter((ingredient) => ingredient.name.toLowerCase().includes(term));
+        listEl.innerHTML = '';
+        if (!filtered.length) {
+            listEl.innerHTML = '<p class="muted">No ingredients found.</p>';
+            return;
+        }
+        filtered.forEach((ingredient) => {
+            const label = document.createElement('label');
+            label.className = 'recipe-filter-item';
+            const checked = ingredient.default_available ? 'checked' : '';
+            label.innerHTML = `
+                <input type="checkbox" data-ingredient-default-id="${ingredient.id}" ${checked}>
+                <span>${escapeHtml(ingredient.name)}</span>
+            `;
+            listEl.appendChild(label);
+        });
+        listEl.querySelectorAll('[data-ingredient-default-id]').forEach((input) => {
+            input.addEventListener('change', async () => {
+                const ingredientId = Number(input.dataset.ingredientDefaultId);
+                try {
+                    const updated = await api.updateIngredientPreference(ingredientId, {
+                        default_available: input.checked,
+                    });
+                    const target = ingredients.find((item) => item.id === ingredientId);
+                    if (target) {
+                        target.default_available = updated.default_available;
+                    }
+                    setMessage(messageEl, 'Ingredient defaults updated.');
+                } catch (err) {
+                    input.checked = !input.checked;
+                    setMessage(messageEl, `Failed to update default ingredient: ${err.message}`, true);
+                }
+            });
+        });
+    }
+
+    searchEl.addEventListener('input', () => renderList(searchEl.value));
+
+    try {
+        ingredients = await api.getIngredients();
+        renderList();
+    } catch (err) {
+        setMessage(messageEl, `Failed to load ingredients: ${err.message}`, true);
+    }
 }
 
 async function render() {
@@ -683,6 +851,10 @@ async function render() {
     }
     if (state.route === 'finder') {
         await renderFinderView();
+        return;
+    }
+    if (state.route === 'ingredients') {
+        await renderIngredientsView();
         return;
     }
     nav('list');

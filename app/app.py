@@ -30,6 +30,10 @@ class IngredientInput(BaseModel):
     notes: Optional[str] = None
 
 
+class IngredientPreferencePayload(BaseModel):
+    default_available: bool
+
+
 class RecipePayload(BaseModel):
     title: str = Field(min_length=1)
     instructions: str = ""
@@ -143,6 +147,30 @@ def create_app(config: Config | None = None) -> FastAPI:
             }
             for recipe in recipes
         ]
+
+    @app.patch("/api/ingredients/{ingredient_id}")
+    async def update_ingredient_preference(
+        ingredient_id: int, data: IngredientPreferencePayload
+    ) -> dict[str, Any]:
+        updated = app.state.db.update_ingredient_default_available(
+            ingredient_id=ingredient_id,
+            default_available=data.default_available,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Ingredient not found")
+        return updated.to_dict()
+
+    @app.post("/api/ingredients/{ingredient_id}/default")
+    async def update_ingredient_default(
+        ingredient_id: int, data: IngredientPreferencePayload
+    ) -> dict[str, Any]:
+        updated = app.state.db.update_ingredient_default_available(
+            ingredient_id=ingredient_id,
+            default_available=data.default_available,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Ingredient not found")
+        return updated.to_dict()
 
     @app.get("/api/stats")
     async def get_stats() -> dict[str, Any]:

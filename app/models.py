@@ -12,6 +12,7 @@ class Ingredient:
     id: Optional[int] = None
     name: str = ""
     category: Optional[str] = None
+    default_available: bool = False
 
     @classmethod
     def from_row(cls, row: dict) -> "Ingredient":
@@ -19,6 +20,7 @@ class Ingredient:
             id=row.get("id"),
             name=row.get("name", ""),
             category=row.get("category"),
+            default_available=bool(row.get("default_available", 0)),
         )
 
     def to_dict(self) -> dict:
@@ -26,6 +28,7 @@ class Ingredient:
             "id": self.id,
             "name": self.name,
             "category": self.category,
+            "default_available": self.default_available,
         }
 
 

@@ -39,10 +39,18 @@ class RecipeDatabase:
                 CREATE TABLE IF NOT EXISTS ingredients (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT UNIQUE NOT NULL,
-                    category TEXT
+                    category TEXT,
+                    default_available INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
+            ingredient_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(ingredients)").fetchall()
+            }
+            if "default_available" not in ingredient_columns:
+                conn.execute(
+                    "ALTER TABLE ingredients ADD COLUMN default_available INTEGER NOT NULL DEFAULT 0"
+                )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS recipes (
@@ -150,7 +158,7 @@ class RecipeDatabase:
         self, conn: sqlite3.Connection, normalized_name: str, category: Optional[str]
     ) -> Ingredient:
         existing = conn.execute(
-            "SELECT id, name, category FROM ingredients WHERE name = ?",
+            "SELECT id, name, category, default_available FROM ingredients WHERE name = ?",
             (normalized_name,),
         ).fetchone()
         if existing:
@@ -172,14 +180,36 @@ class RecipeDatabase:
     def get_all_ingredients(self) -> list[Ingredient]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, name, category FROM ingredients ORDER BY name ASC"
+                "SELECT id, name, category, default_available FROM ingredients ORDER BY name ASC"
             ).fetchall()
         return [Ingredient.from_row(dict(row)) for row in rows]
 
     def get_ingredient_by_id(self, ingredient_id: int) -> Optional[Ingredient]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, name, category FROM ingredients WHERE id = ?",
+                "SELECT id, name, category, default_available FROM ingredients WHERE id = ?",
+                (ingredient_id,),
+            ).fetchone()
+        return Ingredient.from_row(dict(row)) if row else None
+
+    def update_ingredient_default_available(
+        self, ingredient_id: int, default_available: bool
+    ) -> Optional[Ingredient]:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE ingredients
+                SET default_available = ?
+                WHERE id = ?
+                """,
+                (1 if default_available else 0, ingredient_id),
+            )
+            if cursor.rowcount == 0:
+                conn.commit()
+                return None
+            conn.commit()
+            row = conn.execute(
+                "SELECT id, name, category, default_available FROM ingredients WHERE id = ?",
                 (ingredient_id,),
             ).fetchone()
         return Ingredient.from_row(dict(row)) if row else None

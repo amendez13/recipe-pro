@@ -18,6 +18,7 @@
                 <button data-route="add">Add Recipe</button>
                 <button data-route="shopping">Shopping List</button>
                 <button data-route="finder">Recipe Finder</button>
+                <button data-route="ingredients">Ingredients</button>
             </nav>
         </div>
     </header>
@@ -122,12 +123,28 @@
     <template id="finder-view-template">
         <section class="panel">
             <h2>Recipe Finder</h2>
-            <div id="finder-ingredients" class="ingredient-pool"></div>
             <div class="row gap">
-                <button id="find-recipes">Find Recipes</button>
+                <button id="finder-toggle-mode">Show Suggestions</button>
             </div>
-            <div id="finder-message" class="message"></div>
-            <div id="finder-results" class="stack"></div>
+            <section id="finder-select-panel">
+                <div id="finder-ingredients" class="ingredient-pool"></div>
+            </section>
+            <section id="finder-results-panel" class="hidden">
+                <div id="finder-message" class="message"></div>
+                <div id="finder-results" class="stack"></div>
+            </section>
+        </section>
+    </template>
+
+    <template id="ingredients-view-template">
+        <section class="panel">
+            <h2>Ingredient Defaults</h2>
+            <label>
+                Search ingredients
+                <input id="ingredient-default-search" type="search" placeholder="Type to filter ingredients...">
+            </label>
+            <div id="ingredient-default-message" class="message"></div>
+            <div id="ingredient-default-list" class="recipe-filter-list"></div>
         </section>
     </template>
 

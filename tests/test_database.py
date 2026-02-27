@@ -22,6 +22,11 @@ def test_ingredient_normalization_and_dedup(tmp_path):
 
     assert a.id == b.id
     assert b.name == "onion"
+    assert b.default_available is False
+
+    updated = db.update_ingredient_default_available(b.id, True)
+    assert updated is not None
+    assert updated.default_available is True
 
 
 def test_recipe_crud_and_joined_ingredients(tmp_path):
