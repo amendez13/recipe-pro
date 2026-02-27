@@ -54,10 +54,50 @@ const api = {
         return this.request('/api/ingredients');
     },
     updateIngredientPreference(id, payload) {
-        return this.request(`/api/ingredients/${id}/default`, {
+        return fetch(`/api/ingredients/${id}/default`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
+        }).then(async (response) => {
+            if (response.ok) {
+                return response.json();
+            }
+            // Backward compatibility for deployments still on PATCH endpoint.
+            if (response.status === 404 || response.status === 405) {
+                // First fallback: POST on base ingredient endpoint.
+                const postFallback = await fetch(`/api/ingredients/${id}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                if (postFallback.ok) {
+                    return postFallback.json();
+                }
+                // Second fallback: PATCH on base ingredient endpoint.
+                if (postFallback.status === 404 || postFallback.status === 405) {
+                    return this.request(`/api/ingredients/${id}`, {
+                        method: 'PATCH',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload),
+                    });
+                }
+                let fallbackDetail = 'Request failed';
+                try {
+                    const fallbackBody = await postFallback.json();
+                    fallbackDetail = fallbackBody.detail || JSON.stringify(fallbackBody);
+                } catch (_) {
+                    fallbackDetail = postFallback.statusText;
+                }
+                throw new Error(fallbackDetail);
+            }
+            let detail = 'Request failed';
+            try {
+                const body = await response.json();
+                detail = body.detail || JSON.stringify(body);
+            } catch (_) {
+                detail = response.statusText;
+            }
+            throw new Error(detail);
         });
     },
     getShoppingList(recipe_ids) {

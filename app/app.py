@@ -160,6 +160,18 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Ingredient not found")
         return updated.to_dict()
 
+    @app.post("/api/ingredients/{ingredient_id}")
+    async def update_ingredient_preference_post(
+        ingredient_id: int, data: IngredientPreferencePayload
+    ) -> dict[str, Any]:
+        updated = app.state.db.update_ingredient_default_available(
+            ingredient_id=ingredient_id,
+            default_available=data.default_available,
+        )
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Ingredient not found")
+        return updated.to_dict()
+
     @app.post("/api/ingredients/{ingredient_id}/default")
     async def update_ingredient_default(
         ingredient_id: int, data: IngredientPreferencePayload
