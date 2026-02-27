@@ -1,148 +1,138 @@
-"""Tests for Idea Canvas API."""
-
-import tempfile
-from pathlib import Path
-
-import pytest
 from fastapi.testclient import TestClient
+import pytest
 
-from app.config import Config, DatabaseConfig, WebConfig
 from app.app import create_app
+from app.config import Config, DatabaseConfig, WebConfig
 
 
 @pytest.fixture
-def test_config(tmp_path):
-    """Create a test config with temporary database."""
-    return Config(
+def client(tmp_path):
+    cfg = Config(
         web=WebConfig(host="127.0.0.1", port=8084),
-        database=DatabaseConfig(path=str(tmp_path / "test.db")),
+        database=DatabaseConfig(path=str(tmp_path / "api.db")),
     )
+    return TestClient(create_app(cfg))
 
 
-@pytest.fixture
-def client(test_config):
-    """Create a test client."""
-    app = create_app(test_config)
-    return TestClient(app)
+def create_recipe(client: TestClient, title: str = "Pasta") -> dict:
+    payload = {
+        "title": title,
+        "instructions": "Step 1\nStep 2",
+        "servings": 2,
+        "prep_time": 10,
+        "cook_time": 20,
+        "ingredients": [
+            {"name": "Pasta", "quantity": 200, "unit": "g", "category": "pantry"},
+            {"name": "Salt", "quantity": 1, "unit": "tsp", "category": "pantry"},
+        ],
+    }
+    response = client.post("/api/recipes", json=payload)
+    assert response.status_code == 201
+    return response.json()
 
 
-def test_health_check(client):
-    """Test health endpoint."""
+def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
 
 
-def test_list_ideas_empty(client):
-    """Test listing ideas when empty."""
-    response = client.get("/api/ideas")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["ideas"] == []
-    assert data["total"] == 0
+def test_recipe_crud_and_search(client):
+    created = create_recipe(client, "Pasta Carbonara")
 
+    list_resp = client.get("/api/recipes")
+    assert list_resp.status_code == 200
+    assert len(list_resp.json()) == 1
 
-def test_create_idea(client):
-    """Test creating an idea."""
-    idea_data = {
-        "title": "Test Idea",
-        "content": "This is a test idea.",
-        "category": "test",
-        "tags": ["tag1", "tag2"],
+    search_resp = client.get("/api/recipes?search=Carbon")
+    assert search_resp.status_code == 200
+    assert search_resp.json()[0]["title"] == "Pasta Carbonara"
+
+    detail_resp = client.get(f"/api/recipes/{created['id']}")
+    assert detail_resp.status_code == 200
+    assert len(detail_resp.json()["ingredients"]) == 2
+
+    update_payload = {
+        "title": "Pasta Deluxe",
+        "instructions": "Step 1",
+        "servings": 4,
+        "prep_time": 12,
+        "cook_time": 25,
+        "ingredients": [{"name": "Pasta", "quantity": 300, "unit": "g", "category": "pantry"}],
     }
-    response = client.post("/api/ideas", json=idea_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["title"] == "Test Idea"
-    assert data["content"] == "This is a test idea."
-    assert data["category"] == "test"
-    assert data["tags"] == ["tag1", "tag2"]
-    assert data["id"] is not None
+    update_resp = client.put(f"/api/recipes/{created['id']}", json=update_payload)
+    assert update_resp.status_code == 200
+    assert update_resp.json()["title"] == "Pasta Deluxe"
+
+    delete_resp = client.delete(f"/api/recipes/{created['id']}")
+    assert delete_resp.status_code == 200
+    assert delete_resp.json() == {"success": True}
+
+    assert client.get(f"/api/recipes/{created['id']}").status_code == 404
 
 
-def test_get_idea(client):
-    """Test getting a specific idea."""
-    # Create an idea first
-    idea_data = {"title": "Get Test", "content": "Content", "category": "general", "tags": []}
-    create_response = client.post("/api/ideas", json=idea_data)
-    idea_id = create_response.json()["id"]
-
-    # Get the idea
-    response = client.get(f"/api/ideas/{idea_id}")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["title"] == "Get Test"
+def test_recipe_validation_error(client):
+    response = client.post(
+        "/api/recipes",
+        json={"title": "", "instructions": "", "ingredients": []},
+    )
+    assert response.status_code == 422
 
 
-def test_update_idea(client):
-    """Test updating an idea."""
-    # Create an idea
-    idea_data = {"title": "Original", "content": "Original content", "category": "general", "tags": []}
-    create_response = client.post("/api/ideas", json=idea_data)
-    idea_id = create_response.json()["id"]
+def test_ingredient_endpoints_and_404(client):
+    create_recipe(client, "Soup")
 
-    # Update it
-    update_data = {"title": "Updated", "content": "Updated content"}
-    response = client.put(f"/api/ideas/{idea_id}", json=update_data)
-    assert response.status_code == 200
-    data = response.json()
-    assert data["title"] == "Updated"
-    assert data["content"] == "Updated content"
+    ingredients = client.get("/api/ingredients")
+    assert ingredients.status_code == 200
+    body = ingredients.json()
+    assert len(body) >= 1
 
+    ingredient_id = body[0]["id"]
+    recipes = client.get(f"/api/ingredients/{ingredient_id}/recipes")
+    assert recipes.status_code == 200
+    assert len(recipes.json()) >= 1
 
-def test_delete_idea(client):
-    """Test deleting an idea."""
-    # Create an idea
-    idea_data = {"title": "To Delete", "content": "Will be deleted", "category": "general", "tags": []}
-    create_response = client.post("/api/ideas", json=idea_data)
-    idea_id = create_response.json()["id"]
-
-    # Delete it
-    response = client.delete(f"/api/ideas/{idea_id}")
-    assert response.status_code == 200
-
-    # Verify it's gone
-    get_response = client.get(f"/api/ideas/{idea_id}")
-    assert get_response.status_code == 404
+    missing = client.get("/api/ingredients/999999/recipes")
+    assert missing.status_code == 404
 
 
-def test_search_ideas(client):
-    """Test searching ideas."""
-    # Create some ideas
-    client.post("/api/ideas", json={"title": "Python Tips", "content": "Tips for Python", "category": "programming", "tags": []})
-    client.post("/api/ideas", json={"title": "JavaScript Guide", "content": "Guide for JS", "category": "programming", "tags": []})
-
-    # Search
-    response = client.get("/api/search?q=Python")
-    assert response.status_code == 200
-    data = response.json()
-    assert data["count"] == 1
-    assert data["ideas"][0]["title"] == "Python Tips"
-
-
-def test_get_categories(client):
-    """Test getting categories."""
-    # Create ideas with different categories
-    client.post("/api/ideas", json={"title": "Idea 1", "content": "", "category": "alpha", "tags": []})
-    client.post("/api/ideas", json={"title": "Idea 2", "content": "", "category": "beta", "tags": []})
-
-    response = client.get("/api/categories")
-    assert response.status_code == 200
-    categories = response.json()
-    assert "alpha" in categories
-    assert "beta" in categories
-
-
-def test_get_stats(client):
-    """Test getting stats."""
-    # Create some ideas
-    client.post("/api/ideas", json={"title": "Idea 1", "content": "", "category": "cat1", "tags": []})
-    client.post("/api/ideas", json={"title": "Idea 2", "content": "", "category": "cat1", "tags": []})
-    client.post("/api/ideas", json={"title": "Idea 3", "content": "", "category": "cat2", "tags": []})
-
+def test_stats_endpoint(client):
+    create_recipe(client, "Salad")
     response = client.get("/api/stats")
+
     assert response.status_code == 200
     data = response.json()
-    assert data["total"] == 3
-    assert data["categories"]["cat1"] == 2
-    assert data["categories"]["cat2"] == 1
+    assert data["recipe_count"] == 1
+    assert data["ingredient_count"] >= 1
+    assert isinstance(data["category_counts"], dict)
+
+
+def test_shopping_list_and_empty(client):
+    r1 = create_recipe(client, "Soup")
+    r2 = create_recipe(client, "Stew")
+
+    empty = client.post("/api/shopping-list", json={"recipe_ids": []})
+    assert empty.status_code == 200
+    assert empty.json() == {"items": [], "by_category": {}}
+
+    response = client.post("/api/shopping-list", json={"recipe_ids": [r1["id"], r2["id"]]})
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data["items"]) >= 1
+    assert "by_category" in data
+
+
+def test_suggestions_endpoint(client):
+    create_recipe(client, "Pasta")
+    create_recipe(
+        client,
+        "Egg Dish",
+    )
+    ingredients = client.get("/api/ingredients").json()
+    salt = next(i for i in ingredients if i["name"] == "salt")
+
+    response = client.post("/api/suggestions", json={"ingredient_ids": [salt["id"]]})
+    assert response.status_code == 200
+    data = response.json()
+    assert "suggestions" in data
+    assert len(data["suggestions"]) >= 1
