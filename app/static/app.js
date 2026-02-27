@@ -712,6 +712,7 @@ async function renderFinderView() {
     const resultsEl = document.getElementById('finder-results');
     const messageEl = document.getElementById('finder-message');
     const toggleBtn = document.getElementById('finder-toggle-mode');
+    const manageIngredientsBtn = document.getElementById('finder-manage-ingredients');
     const selectPanelEl = document.getElementById('finder-select-panel');
     const resultsPanelEl = document.getElementById('finder-results-panel');
     let suggestionsMode = false;
@@ -733,6 +734,7 @@ async function renderFinderView() {
         suggestionsMode = !suggestionsMode;
         renderFinderMode();
     });
+    manageIngredientsBtn.addEventListener('click', () => nav('ingredients'));
 
     try {
         state.ingredients = await api.getIngredients();
