@@ -2,8 +2,8 @@ const root = document.getElementById('app-root');
 const state = {
     route: 'list',
     recipes: [],
-    selectedRecipeIds: new Set(),
     shoppingChecks: new Set(),
+    shoppingRecipeIds: new Set(),
     ingredients: [],
     editRecipeId: null,
     detailRecipeId: null,
@@ -98,10 +98,8 @@ function setMessage(el, text, isError = false) {
 function recipeCard(recipe) {
     const article = document.createElement('article');
     article.className = 'card recipe-card';
-    const checked = state.selectedRecipeIds.has(recipe.id) ? 'checked' : '';
     article.innerHTML = `
         <label class="row gap align-center compact-row">
-            <input data-select-recipe="${recipe.id}" type="checkbox" ${checked}>
             <button type="button" class="title-link" data-open-recipe="${recipe.id}">${escapeHtml(recipe.title)}</button>
         </label>
         <p class="muted compact-meta">Servings: ${recipe.servings ?? '-'} | Prep: ${recipe.prep_time ?? '-'} | Cook: ${recipe.cook_time ?? '-'}</p>
@@ -139,16 +137,6 @@ async function renderListView() {
             setMessage(messageEl, `Loaded ${recipes.length} recipe(s).`);
             recipes.forEach((recipe) => listEl.appendChild(recipeCard(recipe)));
 
-            listEl.querySelectorAll('[data-select-recipe]').forEach((input) => {
-                input.addEventListener('change', () => {
-                    const id = Number(input.dataset.selectRecipe);
-                    if (input.checked) {
-                        state.selectedRecipeIds.add(id);
-                    } else {
-                        state.selectedRecipeIds.delete(id);
-                    }
-                });
-            });
             listEl.querySelectorAll('[data-open-recipe]').forEach((button) => {
                 button.addEventListener('click', () => nav('detail', { id: Number(button.dataset.openRecipe) }));
             });
@@ -292,7 +280,6 @@ async function renderDetailView(recipeId) {
                 return;
             }
             await api.deleteRecipe(recipe.id);
-            state.selectedRecipeIds.delete(recipe.id);
             nav('list');
         });
         document.getElementById('back-to-list').addEventListener('click', () => nav('list'));
@@ -444,12 +431,94 @@ async function renderShoppingView() {
 
     const categoriesEl = document.getElementById('shopping-categories');
     const messageEl = document.getElementById('shopping-message');
+    const searchEl = document.getElementById('shopping-recipe-search');
+    const resultsEl = document.getElementById('shopping-recipe-results');
+    const selectedEl = document.getElementById('shopping-selected-recipes');
+    const selectionMetaEl = document.getElementById('shopping-selection-meta');
+
+    let availableRecipes = [];
+
+    function renderSelectionMeta() {
+        const count = state.shoppingRecipeIds.size;
+        selectionMetaEl.textContent = `${count}/10 recipes selected`;
+    }
+
+    function getFilteredRecipes(searchTerm = '') {
+        const terms = searchTerm
+            .trim()
+            .toLowerCase()
+            .split(/\s+/)
+            .filter(Boolean);
+        const unselected = availableRecipes.filter((recipe) => !state.shoppingRecipeIds.has(recipe.id));
+        if (!terms.length) {
+            return unselected.slice(0, 40);
+        }
+        return unselected
+            .filter((recipe) => terms.every((term) => recipe.title.toLowerCase().includes(term)))
+            .slice(0, 40);
+    }
+
+    function renderSelectedFilters() {
+        const selectedRecipes = availableRecipes.filter((recipe) => state.shoppingRecipeIds.has(recipe.id));
+        selectedEl.innerHTML = '';
+        if (!selectedRecipes.length) {
+            selectedEl.innerHTML = '<p class="muted">No selected recipes yet.</p>';
+            return;
+        }
+        selectedRecipes.forEach((recipe) => {
+            const chip = document.createElement('button');
+            chip.type = 'button';
+            chip.className = 'selected-filter-chip';
+            chip.dataset.removeShoppingRecipeId = String(recipe.id);
+            chip.innerHTML = `${escapeHtml(recipe.title)} <span aria-hidden="true">×</span>`;
+            selectedEl.appendChild(chip);
+        });
+        selectedEl.querySelectorAll('[data-remove-shopping-recipe-id]').forEach((button) => {
+            button.addEventListener('click', () => {
+                state.shoppingRecipeIds.delete(Number(button.dataset.removeShoppingRecipeId));
+                renderSelectionMeta();
+                renderSelectedFilters();
+                renderSearchResults(searchEl.value);
+            });
+        });
+    }
+
+    function renderSearchResults(searchTerm = '') {
+        const filtered = getFilteredRecipes(searchTerm);
+        resultsEl.innerHTML = '';
+        if (!filtered.length) {
+            resultsEl.innerHTML = '<p class="muted">No matching recipes available.</p>';
+            return;
+        }
+        filtered.forEach((recipe) => {
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.className = 'recipe-search-item';
+            item.dataset.shoppingPickRecipeId = String(recipe.id);
+            item.textContent = recipe.title;
+            resultsEl.appendChild(item);
+        });
+        resultsEl.querySelectorAll('[data-shopping-pick-recipe-id]').forEach((button) => {
+            button.addEventListener('click', () => {
+                const recipeId = Number(button.dataset.shoppingPickRecipeId);
+                if (state.shoppingRecipeIds.size >= 10) {
+                    setMessage(messageEl, 'You can select up to 10 recipes.', true);
+                    return;
+                }
+                state.shoppingRecipeIds.add(recipeId);
+                searchEl.value = '';
+                renderSelectionMeta();
+                renderSelectedFilters();
+                renderSearchResults('');
+            });
+        });
+    }
 
     async function loadList() {
-        const recipe_ids = Array.from(state.selectedRecipeIds);
+        const recipe_ids = Array.from(state.shoppingRecipeIds);
         if (!recipe_ids.length) {
             categoriesEl.innerHTML = '';
-            setMessage(messageEl, 'Select recipes in the Recipes view first.', true);
+            setMessage(messageEl, 'Select recipes above to generate a shopping list.', true);
             return;
         }
 
@@ -498,10 +567,29 @@ async function renderShoppingView() {
     }
 
     document.getElementById('generate-shopping-list').addEventListener('click', loadList);
+    document.getElementById('clear-shopping-recipes').addEventListener('click', () => {
+        state.shoppingRecipeIds.clear();
+        renderSelectionMeta();
+        renderSelectedFilters();
+        renderSearchResults(searchEl.value);
+        categoriesEl.innerHTML = '';
+        setMessage(messageEl, 'Recipe selection cleared.');
+    });
     document.getElementById('clear-shopping').addEventListener('click', () => {
         state.shoppingChecks.clear();
         loadList();
     });
+
+    searchEl.addEventListener('input', () => renderSearchResults(searchEl.value));
+
+    try {
+        availableRecipes = await api.getRecipes();
+        renderSelectionMeta();
+        renderSelectedFilters();
+        renderSearchResults();
+    } catch (err) {
+        setMessage(messageEl, `Failed to load recipes: ${err.message}`, true);
+    }
 
     await loadList();
 }
@@ -570,12 +658,11 @@ async function render() {
         return;
     }
     if (state.route === 'detail') {
-        const selectedId = state.detailRecipeId || Array.from(state.selectedRecipeIds)[0];
-        if (!selectedId) {
+        if (!state.detailRecipeId) {
             nav('list');
             return;
         }
-        await renderDetailView(selectedId);
+        await renderDetailView(state.detailRecipeId);
         return;
     }
     if (state.route === 'add') {

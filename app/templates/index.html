@@ -102,8 +102,16 @@
     <template id="shopping-view-template">
         <section class="panel">
             <h2>Shopping List</h2>
+            <label>
+                Find recipes
+                <input id="shopping-recipe-search" type="search" placeholder="Search recipes to include...">
+            </label>
+            <div id="shopping-selection-meta" class="message"></div>
+            <div id="shopping-selected-recipes" class="selected-filter-list"></div>
+            <div id="shopping-recipe-results" class="recipe-search-results"></div>
             <div class="row gap">
                 <button id="generate-shopping-list">Generate from Selected Recipes</button>
+                <button id="clear-shopping-recipes">Clear Recipes</button>
                 <button id="clear-shopping">Clear Checks</button>
             </div>
             <div id="shopping-message" class="message"></div>
