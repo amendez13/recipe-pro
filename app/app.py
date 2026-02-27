@@ -1,4 +1,4 @@
-"""FastAPI app for Idea Canvas."""
+"""FastAPI app for Recipe Pro."""
 
 from __future__ import annotations
 
@@ -9,11 +9,10 @@ from typing import Any, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .config import Config, get_default_config_path, load_config
-from .database import IdeaDatabase
-from .models import Idea
+from .database import RecipeDatabase
 
 logger = logging.getLogger(__name__)
 
@@ -23,25 +22,36 @@ TEMPLATES_DIR = MODULE_DIR / "templates"
 INDEX_FILE = TEMPLATES_DIR / "index.html"
 
 
-class IdeaCreate(BaseModel):
-    title: str
-    content: str
-    category: str = "general"
-    tags: list[str] = []
-
-
-class IdeaUpdate(BaseModel):
-    title: Optional[str] = None
-    content: Optional[str] = None
+class IngredientInput(BaseModel):
+    name: str = Field(min_length=1)
+    quantity: float = Field(ge=0)
+    unit: str = Field(min_length=1)
     category: Optional[str] = None
-    tags: Optional[list[str]] = None
+    notes: Optional[str] = None
+
+
+class RecipePayload(BaseModel):
+    title: str = Field(min_length=1)
+    instructions: str = Field(min_length=1)
+    servings: Optional[int] = Field(default=None, ge=1)
+    prep_time: Optional[int] = Field(default=None, ge=0)
+    cook_time: Optional[int] = Field(default=None, ge=0)
+    ingredients: list[IngredientInput] = Field(default_factory=list)
+
+
+class RecipeIdsPayload(BaseModel):
+    recipe_ids: list[int] = Field(default_factory=list)
+
+
+class SuggestionPayload(BaseModel):
+    ingredient_ids: list[int] = Field(default_factory=list)
 
 
 def create_app(config: Config | None = None) -> FastAPI:
     app = FastAPI(
-        title="Idea Canvas",
-        description="A web app for capturing and organizing ideas",
-        version="0.1.0",
+        title="Recipe Pro",
+        description="Recipe management optimized for cooking mode",
+        version="1.0.0",
     )
 
     cfg = config
@@ -49,10 +59,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         cfg = load_config(get_default_config_path())
     app.state.config = cfg
 
-    db = IdeaDatabase(cfg.database.path)
+    db = RecipeDatabase(cfg.database.path)
     app.state.db = db
 
-    logger.info("Starting Idea Canvas with database at %s", cfg.database.path)
+    logger.info("Starting Recipe Pro with database at %s", cfg.database.path)
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -60,88 +70,81 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def serve_index() -> FileResponse:
         return FileResponse(INDEX_FILE)
 
-    @app.get("/api/ideas")
-    async def list_ideas(
-        category: Optional[str] = None,
-        limit: int = 100,
-        offset: int = 0,
-    ) -> dict[str, Any]:
-        ideas = app.state.db.list_all(category=category, limit=limit, offset=offset)
-        total = app.state.db.count(category=category)
-        return {
-            "ideas": [idea.to_dict() for idea in ideas],
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-        }
+    @app.get("/api/recipes")
+    async def list_recipes(search: Optional[str] = None) -> list[dict[str, Any]]:
+        recipes = app.state.db.get_all_recipes(search=search)
+        return [
+            {
+                "id": recipe.id,
+                "title": recipe.title,
+                "servings": recipe.servings,
+                "prep_time": recipe.prep_time,
+                "cook_time": recipe.cook_time,
+                "created_at": recipe.created_at.isoformat() if recipe.created_at else None,
+            }
+            for recipe in recipes
+        ]
 
-    @app.post("/api/ideas")
-    async def create_idea(data: IdeaCreate) -> dict[str, Any]:
-        idea = Idea(
-            title=data.title,
-            content=data.content,
-            category=data.category,
-            tags=data.tags,
-        )
-        created = app.state.db.create(idea)
+    @app.post("/api/recipes", status_code=201)
+    async def create_recipe(data: RecipePayload) -> dict[str, Any]:
+        created = app.state.db.create_recipe(data.model_dump())
         return created.to_dict()
 
-    @app.get("/api/ideas/{idea_id}")
-    async def get_idea(idea_id: int) -> dict[str, Any]:
-        idea = app.state.db.get(idea_id)
-        if not idea:
-            raise HTTPException(status_code=404, detail="Idea not found")
-        return idea.to_dict()
+    @app.get("/api/recipes/{recipe_id}")
+    async def get_recipe(recipe_id: int) -> dict[str, Any]:
+        recipe = app.state.db.get_recipe_by_id(recipe_id)
+        if not recipe:
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        return recipe.to_dict()
 
-    @app.put("/api/ideas/{idea_id}")
-    async def update_idea(idea_id: int, data: IdeaUpdate) -> dict[str, Any]:
-        existing = app.state.db.get(idea_id)
-        if not existing:
-            raise HTTPException(status_code=404, detail="Idea not found")
-
-        if data.title is not None:
-            existing.title = data.title
-        if data.content is not None:
-            existing.content = data.content
-        if data.category is not None:
-            existing.category = data.category
-        if data.tags is not None:
-            existing.tags = data.tags
-
-        updated = app.state.db.update(existing)
+    @app.put("/api/recipes/{recipe_id}")
+    async def update_recipe(recipe_id: int, data: RecipePayload) -> dict[str, Any]:
+        updated = app.state.db.update_recipe(recipe_id, data.model_dump())
         if not updated:
-            raise HTTPException(status_code=500, detail="Failed to update idea")
+            raise HTTPException(status_code=404, detail="Recipe not found")
         return updated.to_dict()
 
-    @app.delete("/api/ideas/{idea_id}")
-    async def delete_idea(idea_id: int) -> dict[str, str]:
-        deleted = app.state.db.delete(idea_id)
+    @app.delete("/api/recipes/{recipe_id}")
+    async def delete_recipe(recipe_id: int) -> dict[str, bool]:
+        deleted = app.state.db.delete_recipe(recipe_id)
         if not deleted:
-            raise HTTPException(status_code=404, detail="Idea not found")
-        return {"status": "deleted"}
+            raise HTTPException(status_code=404, detail="Recipe not found")
+        return {"success": True}
 
-    @app.get("/api/categories")
-    async def get_categories() -> list[str]:
-        return app.state.db.get_categories()
+    @app.get("/api/ingredients")
+    async def list_ingredients() -> list[dict[str, Any]]:
+        ingredients = app.state.db.get_all_ingredients()
+        return [ingredient.to_dict() for ingredient in ingredients]
 
-    @app.get("/api/search")
-    async def search_ideas(q: str, limit: int = 50) -> dict[str, Any]:
-        ideas = app.state.db.search(q, limit=limit)
-        return {
-            "ideas": [idea.to_dict() for idea in ideas],
-            "query": q,
-            "count": len(ideas),
-        }
+    @app.get("/api/ingredients/{ingredient_id}/recipes")
+    async def recipes_by_ingredient(ingredient_id: int) -> list[dict[str, Any]]:
+        ingredient = app.state.db.get_ingredient_by_id(ingredient_id)
+        if ingredient is None:
+            raise HTTPException(status_code=404, detail="Ingredient not found")
+        recipes = app.state.db.get_recipes_by_ingredient(ingredient_id)
+        return [
+            {
+                "id": recipe.id,
+                "title": recipe.title,
+                "servings": recipe.servings,
+                "prep_time": recipe.prep_time,
+                "cook_time": recipe.cook_time,
+            }
+            for recipe in recipes
+        ]
 
     @app.get("/api/stats")
     async def get_stats() -> dict[str, Any]:
-        total = app.state.db.count()
-        categories = app.state.db.get_categories()
-        category_counts = {cat: app.state.db.count(cat) for cat in categories}
-        return {
-            "total": total,
-            "categories": category_counts,
-        }
+        return app.state.db.get_stats()
+
+    @app.post("/api/shopping-list")
+    async def get_shopping_list(data: RecipeIdsPayload) -> dict[str, Any]:
+        return app.state.db.get_shopping_list(data.recipe_ids)
+
+    @app.post("/api/suggestions")
+    async def get_suggestions(data: SuggestionPayload) -> dict[str, Any]:
+        suggestions = app.state.db.get_recipe_suggestions(data.ingredient_ids)
+        return {"suggestions": suggestions}
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:
@@ -149,7 +152,6 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.get("/{full_path:path}")
     async def spa_fallback(full_path: str) -> FileResponse:
-        """Serve SPA shell for deep links."""
         if full_path.startswith("api/") or full_path.startswith("static/"):
             raise HTTPException(status_code=404, detail="Not found")
         return FileResponse(INDEX_FILE)
