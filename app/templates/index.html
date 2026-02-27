@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Idea Canvas</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-content">
+            <h1>Idea Canvas</h1>
+            <div class="header-actions">
+                <button id="theme-toggle" class="icon-btn" title="Toggle theme">
+                    <span class="theme-icon">&#9788;</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <main>
+        <div class="toolbar">
+            <button id="new-idea-btn" class="primary-btn">+ New Idea</button>
+            <div class="search-box">
+                <input type="text" id="search-input" placeholder="Search ideas...">
+            </div>
+            <select id="category-filter">
+                <option value="">All Categories</option>
+            </select>
+        </div>
+
+        <div class="stats-bar" id="stats-bar">
+            <span id="total-count">0 ideas</span>
+        </div>
+
+        <div class="ideas-grid" id="ideas-grid">
+            <!-- Ideas will be rendered here -->
+        </div>
+    </main>
+
+    <!-- Modal for creating/editing ideas -->
+    <div class="modal-overlay" id="modal-overlay">
+        <div class="modal">
+            <div class="modal-header">
+                <h2 id="modal-title">New Idea</h2>
+                <button class="close-btn" id="modal-close">&times;</button>
+            </div>
+            <form id="idea-form">
+                <input type="hidden" id="idea-id">
+                <div class="form-group">
+                    <label for="idea-title">Title</label>
+                    <input type="text" id="idea-title" required placeholder="What's your idea?">
+                </div>
+                <div class="form-group">
+                    <label for="idea-content">Description</label>
+                    <textarea id="idea-content" rows="6" placeholder="Describe your idea in detail..."></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="idea-category">Category</label>
+                        <input type="text" id="idea-category" placeholder="general" list="category-list">
+                        <datalist id="category-list"></datalist>
+                    </div>
+                    <div class="form-group">
+                        <label for="idea-tags">Tags (comma-separated)</label>
+                        <input type="text" id="idea-tags" placeholder="tag1, tag2, tag3">
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button type="button" class="secondary-btn" id="cancel-btn">Cancel</button>
+                    <button type="submit" class="primary-btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
