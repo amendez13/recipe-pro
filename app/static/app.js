@@ -1,296 +1,492 @@
-// Idea Canvas - Frontend Application
+const root = document.getElementById('app-root');
+const state = {
+    route: 'list',
+    recipes: [],
+    selectedRecipeIds: new Set(),
+    shoppingChecks: new Set(),
+    ingredients: [],
+    editRecipeId: null,
+    detailRecipeId: null,
+};
 
-const API = {
-    async getIdeas(category = '', limit = 100, offset = 0) {
-        const params = new URLSearchParams({ limit, offset });
-        if (category) params.set('category', category);
-        const res = await fetch(`/api/ideas?${params}`);
-        return res.json();
+const api = {
+    async request(url, options = {}) {
+        const response = await fetch(url, options);
+        if (!response.ok) {
+            let detail = 'Request failed';
+            try {
+                const body = await response.json();
+                detail = body.detail || JSON.stringify(body);
+            } catch (_) {
+                detail = response.statusText;
+            }
+            throw new Error(detail);
+        }
+        return response.json();
     },
-
-    async createIdea(data) {
-        const res = await fetch('/api/ideas', {
+    getRecipes(search = '') {
+        const qs = search ? `?search=${encodeURIComponent(search)}` : '';
+        return this.request(`/api/recipes${qs}`);
+    },
+    getRecipe(id) {
+        return this.request(`/api/recipes/${id}`);
+    },
+    createRecipe(payload) {
+        return this.request('/api/recipes', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
+            body: JSON.stringify(payload),
         });
-        return res.json();
     },
-
-    async updateIdea(id, data) {
-        const res = await fetch(`/api/ideas/${id}`, {
+    updateRecipe(id, payload) {
+        return this.request(`/api/recipes/${id}`, {
             method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(data),
+            body: JSON.stringify(payload),
         });
-        return res.json();
     },
-
-    async deleteIdea(id) {
-        const res = await fetch(`/api/ideas/${id}`, { method: 'DELETE' });
-        return res.json();
+    deleteRecipe(id) {
+        return this.request(`/api/recipes/${id}`, { method: 'DELETE' });
     },
-
-    async getCategories() {
-        const res = await fetch('/api/categories');
-        return res.json();
+    getIngredients() {
+        return this.request('/api/ingredients');
     },
-
-    async search(query, limit = 50) {
-        const res = await fetch(`/api/search?q=${encodeURIComponent(query)}&limit=${limit}`);
-        return res.json();
+    getShoppingList(recipe_ids) {
+        return this.request('/api/shopping-list', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ recipe_ids }),
+        });
     },
-
-    async getStats() {
-        const res = await fetch('/api/stats');
-        return res.json();
+    getSuggestions(ingredient_ids) {
+        return this.request('/api/suggestions', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ingredient_ids }),
+        });
     },
 };
 
-// State
-let currentIdeas = [];
-let currentCategory = '';
-let searchTimeout = null;
-
-// DOM Elements
-const ideasGrid = document.getElementById('ideas-grid');
-const newIdeaBtn = document.getElementById('new-idea-btn');
-const modalOverlay = document.getElementById('modal-overlay');
-const modalTitle = document.getElementById('modal-title');
-const modalClose = document.getElementById('modal-close');
-const cancelBtn = document.getElementById('cancel-btn');
-const ideaForm = document.getElementById('idea-form');
-const searchInput = document.getElementById('search-input');
-const categoryFilter = document.getElementById('category-filter');
-const categoryList = document.getElementById('category-list');
-const totalCount = document.getElementById('total-count');
-const themeToggle = document.getElementById('theme-toggle');
-
-// Theme
-function initTheme() {
-    const saved = localStorage.getItem('theme');
-    const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-    const theme = saved || (prefersDark ? 'dark' : 'light');
-    document.documentElement.setAttribute('data-theme', theme);
-    updateThemeIcon();
+function nav(route, payload = null) {
+    state.route = route;
+    if (route === 'detail' && payload) {
+        state.detailRecipeId = payload.id;
+    }
+    if (route === 'edit' && payload) {
+        state.editRecipeId = payload.id;
+    }
+    if (route !== 'edit') {
+        state.editRecipeId = null;
+    }
+    if (route !== 'detail') {
+        state.detailRecipeId = null;
+    }
+    render();
 }
 
-function toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme');
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    localStorage.setItem('theme', next);
-    updateThemeIcon();
+document.querySelectorAll('[data-route]').forEach((button) => {
+    button.addEventListener('click', () => nav(button.dataset.route));
+});
+
+function setMessage(el, text, isError = false) {
+    el.textContent = text;
+    el.className = `message ${isError ? 'error' : ''}`;
 }
 
-function updateThemeIcon() {
-    const theme = document.documentElement.getAttribute('data-theme');
-    const icon = document.querySelector('.theme-icon');
-    icon.textContent = theme === 'dark' ? '☀' : '☾';
-}
-
-// Modal
-function openModal(title = 'New Idea', idea = null) {
-    modalTitle.textContent = title;
-    document.getElementById('idea-id').value = idea?.id || '';
-    document.getElementById('idea-title').value = idea?.title || '';
-    document.getElementById('idea-content').value = idea?.content || '';
-    document.getElementById('idea-category').value = idea?.category || 'general';
-    document.getElementById('idea-tags').value = idea?.tags?.join(', ') || '';
-    modalOverlay.classList.add('active');
-    document.getElementById('idea-title').focus();
-}
-
-function closeModal() {
-    modalOverlay.classList.remove('active');
-    ideaForm.reset();
-}
-
-// Render
-function formatDate(isoString) {
-    if (!isoString) return '';
-    const date = new Date(isoString);
-    return date.toLocaleDateString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        year: 'numeric',
-    });
-}
-
-function renderIdea(idea) {
-    const card = document.createElement('div');
-    card.className = 'idea-card';
-
-    const tagsHtml = idea.tags?.length
-        ? `<div class="tags">${idea.tags.map(t => `<span class="tag">${escapeHtml(t)}</span>`).join('')}</div>`
-        : '';
-
-    card.innerHTML = `
-        <h3>${escapeHtml(idea.title)}</h3>
-        <p class="content-preview">${escapeHtml(idea.content || '')}</p>
-        <div class="meta">
-            <span class="category">${escapeHtml(idea.category)}</span>
-            <span class="date">${formatDate(idea.created_at)}</span>
-        </div>
-        ${tagsHtml}
-        <div class="card-actions">
-            <button class="secondary-btn edit-btn" data-id="${idea.id}">Edit</button>
-            <button class="danger-btn delete-btn" data-id="${idea.id}">Delete</button>
+function recipeCard(recipe) {
+    const article = document.createElement('article');
+    article.className = 'card';
+    const checked = state.selectedRecipeIds.has(recipe.id) ? 'checked' : '';
+    article.innerHTML = `
+        <label class="row gap align-center">
+            <input data-select-recipe="${recipe.id}" type="checkbox" ${checked}>
+            <strong>${escapeHtml(recipe.title)}</strong>
+        </label>
+        <p class="muted">Servings: ${recipe.servings ?? '-'} | Prep: ${recipe.prep_time ?? '-'} | Cook: ${recipe.cook_time ?? '-'}</p>
+        <div class="row gap">
+            <button data-open-recipe="${recipe.id}">Open</button>
+            <button data-edit-recipe="${recipe.id}">Edit</button>
         </div>
     `;
-
-    card.querySelector('.edit-btn').addEventListener('click', (e) => {
-        e.stopPropagation();
-        openModal('Edit Idea', idea);
-    });
-
-    card.querySelector('.delete-btn').addEventListener('click', async (e) => {
-        e.stopPropagation();
-        if (confirm('Delete this idea?')) {
-            await API.deleteIdea(idea.id);
-            loadIdeas();
-        }
-    });
-
-    return card;
+    return article;
 }
 
 function escapeHtml(text) {
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = String(text ?? '');
     return div.innerHTML;
 }
 
-function renderIdeas(ideas) {
-    ideasGrid.innerHTML = '';
+async function renderListView() {
+    root.innerHTML = '';
+    const node = document.getElementById('list-view-template').content.cloneNode(true);
+    root.appendChild(node);
 
-    if (ideas.length === 0) {
-        ideasGrid.innerHTML = `
-            <div class="empty-state">
-                <h2>No ideas yet</h2>
-                <p>Click "+ New Idea" to capture your first idea!</p>
-            </div>
-        `;
-        return;
+    const listEl = document.getElementById('recipe-list');
+    const searchEl = document.getElementById('recipe-search');
+    const messageEl = document.getElementById('recipe-list-message');
+
+    async function load(search = '') {
+        try {
+            const recipes = await api.getRecipes(search);
+            state.recipes = recipes;
+            listEl.innerHTML = '';
+            if (!recipes.length) {
+                setMessage(messageEl, 'No recipes found.');
+                return;
+            }
+            setMessage(messageEl, `Loaded ${recipes.length} recipe(s).`);
+            recipes.forEach((recipe) => listEl.appendChild(recipeCard(recipe)));
+
+            listEl.querySelectorAll('[data-select-recipe]').forEach((input) => {
+                input.addEventListener('change', () => {
+                    const id = Number(input.dataset.selectRecipe);
+                    if (input.checked) {
+                        state.selectedRecipeIds.add(id);
+                    } else {
+                        state.selectedRecipeIds.delete(id);
+                    }
+                });
+            });
+            listEl.querySelectorAll('[data-open-recipe]').forEach((button) => {
+                button.addEventListener('click', () => nav('detail', { id: Number(button.dataset.openRecipe) }));
+            });
+            listEl.querySelectorAll('[data-edit-recipe]').forEach((button) => {
+                button.addEventListener('click', () => nav('edit', { id: Number(button.dataset.editRecipe) }));
+            });
+        } catch (err) {
+            setMessage(messageEl, `Failed to load recipes: ${err.message}`, true);
+        }
     }
 
-    ideas.forEach(idea => {
-        ideasGrid.appendChild(renderIdea(idea));
+    searchEl.addEventListener('input', () => load(searchEl.value.trim()));
+    document.getElementById('refresh-recipes').addEventListener('click', () => load(searchEl.value.trim()));
+
+    await load();
+}
+
+function splitInstructions(instructions) {
+    return String(instructions || '')
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean);
+}
+
+async function renderDetailView(recipeId) {
+    root.innerHTML = '';
+    const node = document.getElementById('detail-view-template').content.cloneNode(true);
+    root.appendChild(node);
+
+    const metaEl = document.getElementById('detail-meta');
+    const titleEl = document.getElementById('detail-title');
+    const ingredientsEl = document.getElementById('detail-ingredients');
+    const stepsEl = document.getElementById('detail-steps');
+
+    try {
+        const recipe = await api.getRecipe(recipeId);
+        titleEl.textContent = recipe.title;
+        metaEl.textContent = `Servings: ${recipe.servings ?? '-'} | Prep: ${recipe.prep_time ?? '-'} min | Cook: ${recipe.cook_time ?? '-'} min`;
+
+        ingredientsEl.innerHTML = '';
+        recipe.ingredients.forEach((item) => {
+            const li = document.createElement('li');
+            const name = item.ingredient?.name || `Ingredient #${item.ingredient_id}`;
+            li.textContent = `${item.quantity} ${item.unit} ${name}${item.notes ? ` (${item.notes})` : ''}`;
+            ingredientsEl.appendChild(li);
+        });
+
+        stepsEl.innerHTML = '';
+        splitInstructions(recipe.instructions).forEach((step) => {
+            const li = document.createElement('li');
+            li.textContent = step;
+            stepsEl.appendChild(li);
+        });
+
+        document.getElementById('edit-recipe').addEventListener('click', () => nav('edit', { id: recipe.id }));
+        document.getElementById('delete-recipe').addEventListener('click', async () => {
+            if (!confirm(`Delete ${recipe.title}?`)) {
+                return;
+            }
+            await api.deleteRecipe(recipe.id);
+            state.selectedRecipeIds.delete(recipe.id);
+            nav('list');
+        });
+        document.getElementById('back-to-list').addEventListener('click', () => nav('list'));
+    } catch (err) {
+        setMessage(metaEl, `Unable to load recipe: ${err.message}`, true);
+    }
+}
+
+function ingredientRow(initial = {}) {
+    const row = document.createElement('div');
+    row.className = 'row gap responsive ingredient-row';
+    row.innerHTML = `
+        <input class="i-name" placeholder="name" value="${escapeHtml(initial.name || '')}" required>
+        <input class="i-qty" type="number" min="0" step="0.01" placeholder="qty" value="${initial.quantity ?? ''}" required>
+        <input class="i-unit" placeholder="unit" value="${escapeHtml(initial.unit || '')}" required>
+        <input class="i-category" placeholder="category" value="${escapeHtml(initial.category || '')}">
+        <input class="i-notes" placeholder="notes" value="${escapeHtml(initial.notes || '')}">
+        <button type="button" class="danger remove-row">Remove</button>
+    `;
+    row.querySelector('.remove-row').addEventListener('click', () => row.remove());
+    return row;
+}
+
+function collectFormPayload() {
+    const ingredients = [];
+    document.querySelectorAll('.ingredient-row').forEach((row) => {
+        const name = row.querySelector('.i-name').value.trim();
+        const quantity = Number(row.querySelector('.i-qty').value);
+        const unit = row.querySelector('.i-unit').value.trim();
+        if (!name || !unit || Number.isNaN(quantity)) {
+            return;
+        }
+        ingredients.push({
+            name,
+            quantity,
+            unit,
+            category: row.querySelector('.i-category').value.trim() || null,
+            notes: row.querySelector('.i-notes').value.trim() || null,
+        });
+    });
+
+    return {
+        title: document.getElementById('f-title').value.trim(),
+        instructions: document.getElementById('f-instructions').value.trim(),
+        servings: Number(document.getElementById('f-servings').value) || null,
+        prep_time: Number(document.getElementById('f-prep').value) || null,
+        cook_time: Number(document.getElementById('f-cook').value) || null,
+        ingredients,
+    };
+}
+
+async function renderFormView(recipeId = null) {
+    root.innerHTML = '';
+    const node = document.getElementById('form-view-template').content.cloneNode(true);
+    root.appendChild(node);
+
+    const form = document.getElementById('recipe-form');
+    const rowsEl = document.getElementById('ingredient-rows');
+    const messageEl = document.getElementById('form-message');
+    const titleEl = document.getElementById('form-title');
+
+    document.getElementById('add-ingredient-row').addEventListener('click', () => {
+        rowsEl.appendChild(ingredientRow());
+    });
+    document.getElementById('cancel-form').addEventListener('click', () => nav('list'));
+
+    if (recipeId) {
+        titleEl.textContent = 'Edit Recipe';
+        try {
+            const recipe = await api.getRecipe(recipeId);
+            document.getElementById('f-title').value = recipe.title;
+            document.getElementById('f-instructions').value = recipe.instructions;
+            document.getElementById('f-servings').value = recipe.servings ?? '';
+            document.getElementById('f-prep').value = recipe.prep_time ?? '';
+            document.getElementById('f-cook').value = recipe.cook_time ?? '';
+            if (recipe.ingredients.length) {
+                recipe.ingredients.forEach((item) => rowsEl.appendChild(ingredientRow({
+                    name: item.ingredient?.name || '',
+                    quantity: item.quantity,
+                    unit: item.unit,
+                    category: item.ingredient?.category || '',
+                    notes: item.notes || '',
+                })));
+            }
+        } catch (err) {
+            setMessage(messageEl, `Failed to load recipe: ${err.message}`, true);
+        }
+    }
+
+    if (!rowsEl.children.length) {
+        rowsEl.appendChild(ingredientRow());
+    }
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const payload = collectFormPayload();
+        if (!payload.title || !payload.instructions) {
+            setMessage(messageEl, 'Title and instructions are required.', true);
+            return;
+        }
+
+        try {
+            if (recipeId) {
+                const updated = await api.updateRecipe(recipeId, payload);
+                setMessage(messageEl, `Updated ${updated.title}.`);
+            } else {
+                const created = await api.createRecipe(payload);
+                setMessage(messageEl, `Created ${created.title}.`);
+            }
+            setTimeout(() => nav('list'), 300);
+        } catch (err) {
+            setMessage(messageEl, `Save failed: ${err.message}`, true);
+        }
     });
 }
 
-async function loadIdeas() {
-    try {
-        const data = await API.getIdeas(currentCategory);
-        currentIdeas = data.ideas;
-        renderIdeas(currentIdeas);
-        totalCount.textContent = `${data.total} idea${data.total !== 1 ? 's' : ''}`;
-    } catch (err) {
-        console.error('Failed to load ideas:', err);
+async function renderShoppingView() {
+    root.innerHTML = '';
+    const node = document.getElementById('shopping-view-template').content.cloneNode(true);
+    root.appendChild(node);
+
+    const categoriesEl = document.getElementById('shopping-categories');
+    const messageEl = document.getElementById('shopping-message');
+
+    async function loadList() {
+        const recipe_ids = Array.from(state.selectedRecipeIds);
+        if (!recipe_ids.length) {
+            categoriesEl.innerHTML = '';
+            setMessage(messageEl, 'Select recipes in the Recipes view first.', true);
+            return;
+        }
+
+        try {
+            const data = await api.getShoppingList(recipe_ids);
+            categoriesEl.innerHTML = '';
+            const categories = Object.keys(data.by_category || {});
+            if (!categories.length) {
+                setMessage(messageEl, 'No shopping items for selected recipes.');
+                return;
+            }
+            setMessage(messageEl, `Generated ${data.items.length} item(s) from ${recipe_ids.length} recipe(s).`);
+            categories.forEach((category) => {
+                const section = document.createElement('section');
+                section.className = 'card';
+                section.innerHTML = `<h3>${escapeHtml(category)}</h3>`;
+                const list = document.createElement('ul');
+                data.by_category[category].forEach((item) => {
+                    const id = `${item.ingredient_id}-${item.unit}`;
+                    const li = document.createElement('li');
+                    li.innerHTML = `
+                        <label>
+                            <input type="checkbox" data-shopping-id="${id}" ${state.shoppingChecks.has(id) ? 'checked' : ''}>
+                            ${item.total_quantity} ${escapeHtml(item.unit)} ${escapeHtml(item.name)} (${escapeHtml(item.recipes.join(', '))})
+                        </label>
+                    `;
+                    list.appendChild(li);
+                });
+                section.appendChild(list);
+                categoriesEl.appendChild(section);
+            });
+
+            categoriesEl.querySelectorAll('[data-shopping-id]').forEach((input) => {
+                input.addEventListener('change', () => {
+                    const id = input.dataset.shoppingId;
+                    if (input.checked) {
+                        state.shoppingChecks.add(id);
+                    } else {
+                        state.shoppingChecks.delete(id);
+                    }
+                });
+            });
+        } catch (err) {
+            setMessage(messageEl, `Shopping list failed: ${err.message}`, true);
+        }
     }
+
+    document.getElementById('generate-shopping-list').addEventListener('click', loadList);
+    document.getElementById('clear-shopping').addEventListener('click', () => {
+        state.shoppingChecks.clear();
+        loadList();
+    });
+
+    await loadList();
 }
 
-async function loadCategories() {
+async function renderFinderView() {
+    root.innerHTML = '';
+    const node = document.getElementById('finder-view-template').content.cloneNode(true);
+    root.appendChild(node);
+
+    const ingredientsEl = document.getElementById('finder-ingredients');
+    const resultsEl = document.getElementById('finder-results');
+    const messageEl = document.getElementById('finder-message');
+
     try {
-        const categories = await API.getCategories();
-        categoryFilter.innerHTML = '<option value="">All Categories</option>';
-        categoryList.innerHTML = '';
-
-        categories.forEach(cat => {
-            const option = document.createElement('option');
-            option.value = cat;
-            option.textContent = cat;
-            categoryFilter.appendChild(option);
-
-            const listOption = document.createElement('option');
-            listOption.value = cat;
-            categoryList.appendChild(listOption);
+        state.ingredients = await api.getIngredients();
+        if (!state.ingredients.length) {
+            setMessage(messageEl, 'No ingredients available yet. Create recipes first.');
+            return;
+        }
+        ingredientsEl.innerHTML = '';
+        state.ingredients.forEach((ingredient) => {
+            const label = document.createElement('label');
+            label.className = 'chip';
+            label.innerHTML = `<input type="checkbox" value="${ingredient.id}"> ${escapeHtml(ingredient.name)}`;
+            ingredientsEl.appendChild(label);
         });
     } catch (err) {
-        console.error('Failed to load categories:', err);
-    }
-}
-
-async function handleSearch(query) {
-    if (!query.trim()) {
-        loadIdeas();
+        setMessage(messageEl, `Failed to load ingredients: ${err.message}`, true);
         return;
     }
 
-    try {
-        const data = await API.search(query);
-        currentIdeas = data.ideas;
-        renderIdeas(currentIdeas);
-        totalCount.textContent = `${data.count} result${data.count !== 1 ? 's' : ''} for "${query}"`;
-    } catch (err) {
-        console.error('Search failed:', err);
-    }
+    document.getElementById('find-recipes').addEventListener('click', async () => {
+        const selected = Array.from(ingredientsEl.querySelectorAll('input:checked')).map((el) => Number(el.value));
+        try {
+            const data = await api.getSuggestions(selected);
+            resultsEl.innerHTML = '';
+            if (!data.suggestions.length) {
+                setMessage(messageEl, 'No matching recipes found.');
+                return;
+            }
+            setMessage(messageEl, `Found ${data.suggestions.length} suggestion(s).`);
+            data.suggestions.forEach((entry) => {
+                const card = document.createElement('article');
+                card.className = 'card';
+                card.innerHTML = `
+                    <h3>${escapeHtml(entry.recipe.title)}</h3>
+                    <p>${entry.match_count}/${entry.total_ingredients} ingredients matched (${entry.match_percentage}%)</p>
+                    <p><strong>Matched:</strong> ${escapeHtml(entry.matched_ingredients.join(', ') || 'None')}</p>
+                    <p><strong>Missing:</strong> ${escapeHtml(entry.missing_ingredients.join(', ') || 'None')}</p>
+                    <button data-open-recipe="${entry.recipe.id}">Open Recipe</button>
+                `;
+                resultsEl.appendChild(card);
+            });
+            resultsEl.querySelectorAll('[data-open-recipe]').forEach((button) => {
+                button.addEventListener('click', () => nav('detail', { id: Number(button.dataset.openRecipe) }));
+            });
+        } catch (err) {
+            setMessage(messageEl, `Suggestions failed: ${err.message}`, true);
+        }
+    });
 }
 
-// Event Listeners
-newIdeaBtn.addEventListener('click', () => openModal());
-modalClose.addEventListener('click', closeModal);
-cancelBtn.addEventListener('click', closeModal);
-themeToggle.addEventListener('click', toggleTheme);
-
-modalOverlay.addEventListener('click', (e) => {
-    if (e.target === modalOverlay) closeModal();
-});
-
-ideaForm.addEventListener('submit', async (e) => {
-    e.preventDefault();
-
-    const id = document.getElementById('idea-id').value;
-    const tagsValue = document.getElementById('idea-tags').value;
-    const tags = tagsValue ? tagsValue.split(',').map(t => t.trim()).filter(Boolean) : [];
-
-    const data = {
-        title: document.getElementById('idea-title').value,
-        content: document.getElementById('idea-content').value,
-        category: document.getElementById('idea-category').value || 'general',
-        tags,
-    };
-
-    try {
-        if (id) {
-            await API.updateIdea(id, data);
-        } else {
-            await API.createIdea(data);
+async function render() {
+    if (state.route === 'list') {
+        await renderListView();
+        return;
+    }
+    if (state.route === 'detail') {
+        const selectedId = state.detailRecipeId || Array.from(state.selectedRecipeIds)[0];
+        if (!selectedId) {
+            nav('list');
+            return;
         }
-        closeModal();
-        loadIdeas();
-        loadCategories();
-    } catch (err) {
-        console.error('Save failed:', err);
-        alert('Failed to save idea');
+        await renderDetailView(selectedId);
+        return;
     }
-});
-
-categoryFilter.addEventListener('change', (e) => {
-    currentCategory = e.target.value;
-    searchInput.value = '';
-    loadIdeas();
-});
-
-searchInput.addEventListener('input', (e) => {
-    clearTimeout(searchTimeout);
-    searchTimeout = setTimeout(() => {
-        handleSearch(e.target.value);
-    }, 300);
-});
-
-// Keyboard shortcuts
-document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && modalOverlay.classList.contains('active')) {
-        closeModal();
+    if (state.route === 'add') {
+        await renderFormView(null);
+        return;
     }
-    if (e.key === 'n' && e.ctrlKey) {
-        e.preventDefault();
-        openModal();
+    if (state.route === 'edit') {
+        if (!state.editRecipeId) {
+            nav('list');
+            return;
+        }
+        await renderFormView(state.editRecipeId);
+        return;
     }
-});
+    if (state.route === 'shopping') {
+        await renderShoppingView();
+        return;
+    }
+    if (state.route === 'finder') {
+        await renderFinderView();
+        return;
+    }
+    nav('list');
+}
 
-// Init
-initTheme();
-loadIdeas();
-loadCategories();
+render();

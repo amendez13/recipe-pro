@@ -1,78 +1,109 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Idea Canvas</title>
+    <title>Recipe Pro</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
-    <header>
-        <div class="header-content">
-            <h1>Idea Canvas</h1>
-            <div class="header-actions">
-                <button id="theme-toggle" class="icon-btn" title="Toggle theme">
-                    <span class="theme-icon">&#9788;</span>
-                </button>
-            </div>
+    <header class="site-header">
+        <div class="shell">
+            <h1>Recipe Pro</h1>
+            <nav class="nav-actions">
+                <button data-route="list">Recipes</button>
+                <button data-route="add">Add Recipe</button>
+                <button data-route="shopping">Shopping List</button>
+                <button data-route="finder">Recipe Finder</button>
+            </nav>
         </div>
     </header>
 
-    <main>
-        <div class="toolbar">
-            <button id="new-idea-btn" class="primary-btn">+ New Idea</button>
-            <div class="search-box">
-                <input type="text" id="search-input" placeholder="Search ideas...">
+    <main class="shell" id="app-root"></main>
+
+    <template id="list-view-template">
+        <section class="panel">
+            <div class="row between gap">
+                <input id="recipe-search" type="search" placeholder="Search recipes by title">
+                <button id="refresh-recipes">Refresh</button>
             </div>
-            <select id="category-filter">
-                <option value="">All Categories</option>
-            </select>
-        </div>
+            <div id="recipe-list-message" class="message"></div>
+            <div id="recipe-list" class="grid"></div>
+        </section>
+    </template>
 
-        <div class="stats-bar" id="stats-bar">
-            <span id="total-count">0 ideas</span>
-        </div>
-
-        <div class="ideas-grid" id="ideas-grid">
-            <!-- Ideas will be rendered here -->
-        </div>
-    </main>
-
-    <!-- Modal for creating/editing ideas -->
-    <div class="modal-overlay" id="modal-overlay">
-        <div class="modal">
-            <div class="modal-header">
-                <h2 id="modal-title">New Idea</h2>
-                <button class="close-btn" id="modal-close">&times;</button>
+    <template id="detail-view-template">
+        <section class="panel cooking-mode">
+            <div id="detail-meta" class="message"></div>
+            <h2 id="detail-title"></h2>
+            <div class="row gap responsive">
+                <aside class="ingredients-panel">
+                    <h3>Ingredients</h3>
+                    <ul id="detail-ingredients"></ul>
+                </aside>
+                <article>
+                    <h3>Instructions</h3>
+                    <ol id="detail-steps"></ol>
+                </article>
             </div>
-            <form id="idea-form">
-                <input type="hidden" id="idea-id">
-                <div class="form-group">
-                    <label for="idea-title">Title</label>
-                    <input type="text" id="idea-title" required placeholder="What's your idea?">
+            <div class="row gap">
+                <button id="edit-recipe">Edit</button>
+                <button id="delete-recipe" class="danger">Delete</button>
+                <button id="back-to-list">Back</button>
+            </div>
+        </section>
+    </template>
+
+    <template id="form-view-template">
+        <section class="panel">
+            <h2 id="form-title">Add Recipe</h2>
+            <form id="recipe-form" class="stack">
+                <label>Title<input id="f-title" required></label>
+                <label>Instructions<textarea id="f-instructions" rows="8" required></textarea></label>
+                <div class="row gap responsive">
+                    <label>Servings<input id="f-servings" type="number" min="1"></label>
+                    <label>Prep Time (min)<input id="f-prep" type="number" min="0"></label>
+                    <label>Cook Time (min)<input id="f-cook" type="number" min="0"></label>
                 </div>
-                <div class="form-group">
-                    <label for="idea-content">Description</label>
-                    <textarea id="idea-content" rows="6" placeholder="Describe your idea in detail..."></textarea>
+
+                <div class="row between gap">
+                    <h3>Ingredients</h3>
+                    <button type="button" id="add-ingredient-row">Add Ingredient</button>
                 </div>
-                <div class="form-row">
-                    <div class="form-group">
-                        <label for="idea-category">Category</label>
-                        <input type="text" id="idea-category" placeholder="general" list="category-list">
-                        <datalist id="category-list"></datalist>
-                    </div>
-                    <div class="form-group">
-                        <label for="idea-tags">Tags (comma-separated)</label>
-                        <input type="text" id="idea-tags" placeholder="tag1, tag2, tag3">
-                    </div>
+                <div id="ingredient-rows" class="stack"></div>
+
+                <div class="row gap">
+                    <button type="submit">Save</button>
+                    <button type="button" id="cancel-form">Cancel</button>
                 </div>
-                <div class="form-actions">
-                    <button type="button" class="secondary-btn" id="cancel-btn">Cancel</button>
-                    <button type="submit" class="primary-btn">Save</button>
-                </div>
+                <div id="form-message" class="message"></div>
             </form>
-        </div>
-    </div>
+        </section>
+    </template>
+
+    <template id="shopping-view-template">
+        <section class="panel">
+            <h2>Shopping List</h2>
+            <div class="row gap">
+                <button id="generate-shopping-list">Generate from Selected Recipes</button>
+                <button id="clear-shopping">Clear Checks</button>
+            </div>
+            <div id="shopping-message" class="message"></div>
+            <div id="shopping-categories" class="stack"></div>
+        </section>
+    </template>
+
+    <template id="finder-view-template">
+        <section class="panel">
+            <h2>Recipe Finder</h2>
+            <div id="finder-ingredients" class="ingredient-pool"></div>
+            <div class="row gap">
+                <button id="find-recipes">Find Recipes</button>
+            </div>
+            <div id="finder-message" class="message"></div>
+            <div id="finder-results" class="stack"></div>
+        </section>
+    </template>
 
     <script src="/static/app.js"></script>
 </body>
