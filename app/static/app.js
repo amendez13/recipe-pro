@@ -672,7 +672,10 @@ async function renderShoppingView() {
         }
         if (event.key === 'Enter') {
             event.preventDefault();
-            const highlighted = currentSearchResults[highlightedSearchIndex];
+            const highlighted =
+                highlightedSearchIndex >= 0
+                    ? currentSearchResults[highlightedSearchIndex]
+                    : currentSearchResults[0];
             if (!highlighted) {
                 return;
             }
