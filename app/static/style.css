@@ -360,6 +360,29 @@ label {
     background: linear-gradient(180deg, #f8fbf8 0%, #ffffff 100%);
 }
 
+.import-methods {
+    gap: 0.7rem;
+}
+
+.import-method {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0.7rem;
+    background: #fff;
+}
+
+.import-method h4 {
+    margin: 0 0 0.45rem;
+    font-family: "Manrope", "Segoe UI", sans-serif;
+    font-size: 0.92rem;
+    letter-spacing: 0.02em;
+    color: var(--text-main);
+}
+
+.import-method textarea {
+    margin-bottom: 0.55rem;
+}
+
 .import-preview {
     border: 1px solid var(--line);
     border-radius: 12px;

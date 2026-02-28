@@ -28,6 +28,33 @@ STATIC_DIR = MODULE_DIR / "static"
 TEMPLATES_DIR = MODULE_DIR / "templates"
 INDEX_FILE = TEMPLATES_DIR / "index.html"
 
+RECIPE_IMPORT_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "title": {"type": "string"},
+        "source_url": {"type": ["string", "null"]},
+        "servings": {"type": ["integer", "null"]},
+        "prep_time": {"type": ["integer", "null"]},
+        "cook_time": {"type": ["integer", "null"]},
+        "steps": {"type": "array", "items": {"type": "string"}},
+        "ingredients": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "quantity": {"type": ["number", "null"]},
+                    "unit": {"type": ["string", "null"]},
+                    "category": {"type": ["string", "null"]},
+                    "notes": {"type": ["string", "null"]},
+                },
+                "required": ["name", "quantity", "unit", "category", "notes"],
+            },
+        },
+    },
+    "required": ["title", "source_url", "servings", "prep_time", "cook_time", "steps", "ingredients"],
+}
+
 
 class IngredientInput(BaseModel):
     name: str = Field(min_length=1)
@@ -70,7 +97,16 @@ class SuggestionPayload(BaseModel):
 
 
 class RecipeImportPayload(BaseModel):
-    url: str = Field(min_length=1)
+    url: Optional[str] = None
+    text: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_input(self) -> "RecipeImportPayload":
+        has_url = bool((self.url or "").strip())
+        has_text = bool((self.text or "").strip())
+        if has_url == has_text:
+            raise ValueError("Provide exactly one import input: url or text")
+        return self
 
 
 def _parse_fractional_number(value: str) -> Optional[float]:
@@ -325,9 +361,9 @@ def _normalize_import_recipe(data: dict[str, Any]) -> dict[str, Any]:
     steps = [str(step).strip() for step in data.get("steps", []) if str(step).strip()]
     ingredients = []
     for item in data.get("ingredients", []):
-        name = str(item.get("name", "")).strip()
-        unit = str(item.get("unit", "")).strip()
-        if not name or not unit:
+        name = str(item.get("name") or "").strip()
+        unit = str(item.get("unit") or "").strip() or "item"
+        if not name:
             continue
         ingredients.append(
             {
@@ -340,15 +376,74 @@ def _normalize_import_recipe(data: dict[str, Any]) -> dict[str, Any]:
         )
 
     return {
-        "title": str(data.get("title", "")).strip(),
+        "title": str(data.get("title") or "").strip(),
         "steps": steps,
         "instructions": "\n".join(steps),
         "servings": data.get("servings"),
         "prep_time": data.get("prep_time"),
         "cook_time": data.get("cook_time"),
         "ingredients": ingredients,
-        "source_url": str(data.get("source_url", "")).strip() or None,
+        "source_url": str(data.get("source_url") or "").strip() or None,
     }
+
+
+def _run_claude_recipe_import(prompt: str, allow_web_fetch: bool = False) -> dict[str, Any]:
+    command = [
+        "claude",
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--json-schema",
+        json.dumps(RECIPE_IMPORT_JSON_SCHEMA),
+    ]
+    if allow_web_fetch:
+        command.extend(["--allowedTools", "WebFetch"])
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=120,
+        )
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=500, detail="claude CLI not found on server") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise HTTPException(status_code=504, detail="Recipe import timed out") from exc
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        raise HTTPException(status_code=502, detail=f"Recipe import failed: {stderr or 'claude CLI error'}") from exc
+
+    try:
+        wrapper = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        wrapper = None
+
+    try:
+        model_output = result.stdout
+        if isinstance(wrapper, dict) and wrapper.get("type") == "result":
+            if wrapper.get("is_error"):
+                errors = wrapper.get("errors") or []
+                error_message = str(errors[0]).strip() if errors else str(wrapper.get("result") or "").strip()
+                raise HTTPException(status_code=502, detail=error_message or "Recipe import failed during execution")
+            structured_output = wrapper.get("structured_output")
+            if isinstance(structured_output, dict):
+                parsed_json = structured_output
+            else:
+                model_output = str(wrapper.get("result") or "")
+                parsed_json = _extract_json_from_text(model_output)
+        else:
+            parsed_json = _extract_json_from_text(model_output)
+        normalized = _normalize_import_recipe(parsed_json)
+    except HTTPException:
+        raise
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Recipe import returned invalid JSON") from exc
+
+    if not normalized["title"] or not normalized["steps"] or not normalized["ingredients"]:
+        raise HTTPException(status_code=422, detail="Imported recipe is incomplete")
+    return normalized
 
 
 def create_app(config: Config | None = None) -> FastAPI:
@@ -488,51 +583,37 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.post("/api/recipes/import-preview")
     async def get_recipe_import_preview(data: RecipeImportPayload) -> dict[str, Any]:
-        parsed = urlparse(data.url.strip())
-        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-            raise HTTPException(status_code=400, detail="Invalid URL")
+        if data.url:
+            source_url = data.url.strip()
+            parsed = urlparse(source_url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise HTTPException(status_code=400, detail="Invalid URL")
 
-        extracted = _extract_recipe_from_url(data.url.strip())
-        if extracted:
-            return extracted
+            extracted = _extract_recipe_from_url(source_url)
+            if extracted:
+                return extracted
+
+            prompt = (
+                "Extract the recipe from this URL and return only valid JSON with keys: "
+                "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
+                "ingredients (array of objects with name, quantity, unit, category, notes). "
+                f"URL: {source_url}"
+            )
+            return _run_claude_recipe_import(prompt, allow_web_fetch=True)
+
+        source_text = (data.text or "").strip()
+        if len(source_text) > 30000:
+            raise HTTPException(status_code=400, detail="Recipe text is too long (max 30000 characters)")
 
         prompt = (
-            "Extract the recipe from this URL and return only valid JSON with keys: "
+            "Extract the recipe from this raw recipe text and return only valid JSON with keys: "
             "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
             "ingredients (array of objects with name, quantity, unit, category, notes). "
-            f"URL: {data.url.strip()}"
+            "If source_url is unknown, use null.\n"
+            "RECIPE TEXT:\n"
+            f"{source_text}"
         )
-        try:
-            result = subprocess.run(
-                ["claude", "-p", prompt, "--allowedTools", "WebFetch"],
-                capture_output=True,
-                text=True,
-                check=True,
-                timeout=120,
-            )
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=500, detail="claude CLI not found on server") from exc
-        except subprocess.TimeoutExpired as exc:
-            raise HTTPException(status_code=504, detail="Recipe import timed out") from exc
-        except subprocess.CalledProcessError as exc:
-            stderr = (exc.stderr or "").strip()
-            raise HTTPException(status_code=502, detail=f"Recipe import failed: {stderr or 'claude CLI error'}") from exc
-
-        try:
-            parsed_json = _extract_json_from_text(result.stdout)
-            if parsed_json.get("subtype") == "error_during_execution":
-                errors = parsed_json.get("errors") or []
-                error_message = str(errors[0]).strip() if errors else "Recipe import failed during execution"
-                raise HTTPException(status_code=502, detail=error_message)
-            normalized = _normalize_import_recipe(parsed_json)
-        except HTTPException:
-            raise
-        except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            raise HTTPException(status_code=502, detail="Recipe import returned invalid JSON") from exc
-
-        if not normalized["title"] or not normalized["steps"] or not normalized["ingredients"]:
-            raise HTTPException(status_code=422, detail="Imported recipe is incomplete")
-        return normalized
+        return _run_claude_recipe_import(prompt, allow_web_fetch=False)
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:

@@ -114,11 +114,11 @@ const api = {
             body: JSON.stringify({ ingredient_ids }),
         });
     },
-    getRecipeImportPreview(url) {
+    getRecipeImportPreview(payload) {
         return this.request('/api/recipes/import-preview', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ url }),
+            body: JSON.stringify(payload),
         });
     },
 };
@@ -417,6 +417,8 @@ async function renderFormView(recipeId = null) {
     const titleEl = document.getElementById('form-title');
     const importSectionEl = document.getElementById('import-assistant');
     const importUrlEl = document.getElementById('import-url');
+    const importTextFileEl = document.getElementById('import-text-file');
+    const importTextEl = document.getElementById('import-text');
     const importMessageEl = document.getElementById('import-message');
     const importPreviewEl = document.getElementById('import-preview');
     const importConfirmBtn = document.getElementById('import-confirm-btn');
@@ -429,15 +431,10 @@ async function renderFormView(recipeId = null) {
         stepRowsEl.appendChild(stepRow());
     });
     document.getElementById('cancel-form').addEventListener('click', () => nav('list'));
-    document.getElementById('import-preview-btn').addEventListener('click', async () => {
-        const url = importUrlEl.value.trim();
-        if (!url) {
-            setMessage(importMessageEl, 'Provide a URL first.', true);
-            return;
-        }
+    async function previewImport(previewPayload, sourceLabel) {
         setMessage(importMessageEl, 'Importing recipe preview...');
         try {
-            importPayload = await api.getRecipeImportPreview(url);
+            importPayload = await api.getRecipeImportPreview(previewPayload);
             importPreviewEl.classList.remove('hidden');
             importConfirmBtn.classList.remove('hidden');
             importPreviewEl.innerHTML = `
@@ -445,7 +442,7 @@ async function renderFormView(recipeId = null) {
                 <p class="muted">Servings: ${importPayload.servings ?? '-'} | Prep: ${importPayload.prep_time ?? '-'} | Cook: ${importPayload.cook_time ?? '-'}</p>
                 <p><strong>Steps:</strong> ${importPayload.steps.length}</p>
                 <p><strong>Ingredients:</strong> ${importPayload.ingredients.length}</p>
-                <p class="muted">Source: ${escapeHtml(importPayload.source_url || url)}</p>
+                <p class="muted">Source: ${escapeHtml(importPayload.source_url || sourceLabel)}</p>
             `;
             setMessage(importMessageEl, 'Preview ready. Confirm to add this recipe.');
         } catch (err) {
@@ -454,6 +451,44 @@ async function renderFormView(recipeId = null) {
             importConfirmBtn.classList.add('hidden');
             setMessage(importMessageEl, `Import failed: ${err.message}`, true);
         }
+    }
+
+    document.getElementById('import-preview-url-btn').addEventListener('click', async () => {
+        const url = importUrlEl.value.trim();
+        if (!url) {
+            setMessage(importMessageEl, 'Provide a URL first.', true);
+            return;
+        }
+        await previewImport({ url }, url);
+    });
+
+    document.getElementById('import-preview-file-btn').addEventListener('click', async () => {
+        const file = importTextFileEl.files?.[0];
+        if (!file) {
+            setMessage(importMessageEl, 'Choose a text file first.', true);
+            return;
+        }
+        let content = '';
+        try {
+            content = (await file.text()).trim();
+        } catch (_) {
+            setMessage(importMessageEl, 'Unable to read selected file.', true);
+            return;
+        }
+        if (!content) {
+            setMessage(importMessageEl, 'Selected file is empty.', true);
+            return;
+        }
+        await previewImport({ text: content }, `File: ${file.name}`);
+    });
+
+    document.getElementById('import-preview-text-btn').addEventListener('click', async () => {
+        const text = importTextEl.value.trim();
+        if (!text) {
+            setMessage(importMessageEl, 'Paste recipe text first.', true);
+            return;
+        }
+        await previewImport({ text }, 'Pasted text');
     });
     importConfirmBtn.addEventListener('click', async () => {
         if (!importPayload) {
@@ -463,6 +498,7 @@ async function renderFormView(recipeId = null) {
         try {
             const created = await api.createRecipe(importPayload);
             setMessage(importMessageEl, `Imported and created ${created.title}.`);
+            importPayload = null;
             setTimeout(() => nav('list'), 300);
         } catch (err) {
             setMessage(importMessageEl, `Failed to save imported recipe: ${err.message}`, true);

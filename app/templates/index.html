@@ -74,12 +74,31 @@
             <div class="entry-flow">
                 <section id="import-assistant" class="entry-block import-assistant">
                     <div class="entry-block-head">
-                        <h3>Import From Link</h3>
-                        <p class="muted">Paste a recipe URL, preview, then confirm before adding.</p>
+                        <h3>Import Recipe</h3>
+                        <p class="muted">Use a link, a text file, or pasted recipe text. Preview first, then confirm.</p>
                     </div>
-                    <div class="row gap responsive">
-                        <input id="import-url" type="url" placeholder="Paste recipe URL...">
-                        <button type="button" id="import-preview-btn">Preview Import</button>
+                    <div class="import-methods stack">
+                        <div class="import-method">
+                            <h4>From Link</h4>
+                            <div class="row gap responsive">
+                                <input id="import-url" type="url" placeholder="Paste recipe URL...">
+                                <button type="button" id="import-preview-url-btn">Preview Link</button>
+                            </div>
+                        </div>
+                        <div class="import-method">
+                            <h4>From Text File</h4>
+                            <div class="row gap responsive">
+                                <input id="import-text-file" type="file" accept=".txt,.md,text/plain">
+                                <button type="button" id="import-preview-file-btn">Preview File</button>
+                            </div>
+                        </div>
+                        <div class="import-method">
+                            <h4>From Text Box</h4>
+                            <textarea id="import-text" rows="6" placeholder="Paste full recipe text here..."></textarea>
+                            <div class="row gap">
+                                <button type="button" id="import-preview-text-btn">Preview Text</button>
+                            </div>
+                        </div>
                     </div>
                     <div id="import-message" class="message"></div>
                     <div id="import-preview" class="import-preview hidden"></div>

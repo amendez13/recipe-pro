@@ -158,17 +158,7 @@ def test_suggestions_endpoint(client):
 def test_recipe_import_preview_endpoint(client, monkeypatch):
     class DummyResult:
         stdout = """
-        {
-          "title": "Imported Recipe",
-          "source_url": "https://example.com/r",
-          "servings": 2,
-          "prep_time": 10,
-          "cook_time": 20,
-          "steps": ["Step one", "Step two"],
-          "ingredients": [
-            {"name": "Salt", "quantity": 1, "unit": "tsp", "category": "spices", "notes": ""}
-          ]
-        }
+        {"type":"result","is_error":false,"result":"{\\"title\\":\\"Imported Recipe\\",\\"source_url\\":\\"https://example.com/r\\",\\"servings\\":2,\\"prep_time\\":10,\\"cook_time\\":20,\\"steps\\":[\\"Step one\\",\\"Step two\\"],\\"ingredients\\":[{\\"name\\":\\"Salt\\",\\"quantity\\":1,\\"unit\\":\\"tsp\\",\\"category\\":\\"spices\\",\\"notes\\":\\"\\"}]}"}
         """
 
     def fake_run(*args, **kwargs):
@@ -187,22 +177,45 @@ def test_recipe_import_preview_endpoint(client, monkeypatch):
     assert len(body["ingredients"]) == 1
 
 
+def test_recipe_import_preview_text_payload(client, monkeypatch):
+    class DummyResult:
+        stdout = """
+        {"type":"result","is_error":false,"result":"{\\"title\\":\\"Imported From Text\\",\\"source_url\\":null,\\"servings\\":3,\\"prep_time\\":5,\\"cook_time\\":25,\\"steps\\":[\\"Mix\\",\\"Cook\\"],\\"ingredients\\":[{\\"name\\":\\"Rice\\",\\"quantity\\":1,\\"unit\\":\\"cup\\",\\"category\\":\\"pantry\\",\\"notes\\":\\"\\"}]}"}
+        """
+
+    def fake_run(*args, **kwargs):
+        return DummyResult()
+
+    monkeypatch.setattr("app.app.subprocess.run", fake_run)
+
+    response = client.post(
+        "/api/recipes/import-preview",
+        json={"text": "Title: Imported From Text\nIngredients: 1 cup rice\nSteps: Mix then cook"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "Imported From Text"
+    assert len(body["steps"]) == 2
+    assert len(body["ingredients"]) == 1
+
+
+def test_recipe_import_preview_rejects_missing_input(client):
+    response = client.post("/api/recipes/import-preview", json={})
+    assert response.status_code == 422
+
+
+def test_recipe_import_preview_rejects_both_inputs(client):
+    response = client.post(
+        "/api/recipes/import-preview",
+        json={"url": "https://example.com/recipe", "text": "some text"},
+    )
+    assert response.status_code == 422
+
+
 def test_recipe_import_preview_parses_fenced_json(client, monkeypatch):
     class DummyResult:
         stdout = """
-        Here is the extracted recipe:
-        ```json
-        {
-          "title": "Fenced Recipe",
-          "servings": 4,
-          "prep_time": 15,
-          "cook_time": 45,
-          "steps": ["Prep", "Bake"],
-          "ingredients": [
-            {"name": "Noodles", "quantity": 12, "unit": "oz", "category": "pantry", "notes": ""}
-          ]
-        }
-        ```
+        {"type":"result","is_error":false,"result":"```json\n{\n  \\"title\\": \\"Fenced Recipe\\",\n  \\"servings\\": 4,\n  \\"prep_time\\": 15,\n  \\"cook_time\\": 45,\n  \\"steps\\": [\\"Prep\\", \\"Bake\\"],\n  \\"ingredients\\": [{\\"name\\": \\"Noodles\\", \\"quantity\\": 12, \\"unit\\": \\"oz\\", \\"category\\": \\"pantry\\", \\"notes\\": \\"\\"}]\n}\n```"}
         """
 
     def fake_run(*args, **kwargs):
@@ -216,6 +229,21 @@ def test_recipe_import_preview_parses_fenced_json(client, monkeypatch):
     assert body["title"] == "Fenced Recipe"
     assert body["steps"] == ["Prep", "Bake"]
     assert len(body["ingredients"]) == 1
+
+
+def test_recipe_import_preview_normalizes_null_source_and_unit(client, monkeypatch):
+    class DummyResult:
+        stdout = """
+        {"type":"result","is_error":false,"result":"{\\"title\\":\\"Null Fields\\",\\"source_url\\":null,\\"servings\\":2,\\"prep_time\\":1,\\"cook_time\\":2,\\"steps\\":[\\"Only step\\"],\\"ingredients\\":[{\\"name\\":\\"Eggs\\",\\"quantity\\":2,\\"unit\\":null,\\"category\\":null,\\"notes\\":null}]}"}
+        """
+
+    def fake_run(*args, **kwargs):
+        return DummyResult()
+
+    monkeypatch.setattr("app.app.subprocess.run", fake_run)
+
+    response = client.post("/api/recipes/import-preview", json={"text": "eggs recipe"})
+    assert response.status_code == 422
 
 
 def test_extract_recipe_from_url_json_ld(monkeypatch):
