@@ -46,7 +46,8 @@ Recipe Pro is a FastAPI web application for managing recipes with a focus on usa
 ingredients
 ├── id (PRIMARY KEY)
 ├── name (UNIQUE, normalized lowercase)
-└── category (optional: produce, dairy, meat, pantry, spices, etc.)
+├── category (optional: produce, dairy, meat, pantry, spices, etc.)
+└── default_available (BOOLEAN/INTEGER, default ingredient selection for finder)
 
 recipes
 ├── id (PRIMARY KEY)
@@ -91,6 +92,9 @@ recipe_ingredients (junction table)
 ### Ingredients
 - `GET /api/ingredients` - List all unique ingredients
 - `GET /api/ingredients/{id}/recipes` - Get recipes using this ingredient
+- `POST /api/ingredients/{id}/default` - Set ingredient `default_available`
+- `POST /api/ingredients/{id}` - Compatibility route for setting `default_available`
+- `PATCH /api/ingredients/{id}` - Compatibility route for setting `default_available`
 
 ### Shopping List
 - `POST /api/shopping-list` - Generate shopping list from recipe IDs
@@ -110,11 +114,12 @@ recipe_ingredients (junction table)
 ### Home / Recipe List
 - Grid or list of recipe cards
 - Search/filter functionality
-- Quick select for shopping list generation
+- Compact list on mobile with clickable title to open recipe
 
 ### Recipe Detail (Cooking Mode)
 - Large, clear typography
-- Step-by-step instructions (optionally one step at a time)
+- Step-by-step instructions with numbered, separated steps
+- Focus mode panel below ingredients with next/back navigation
 - Ingredients panel (sticky or collapsible)
 - Timer integration (future)
 
@@ -125,22 +130,32 @@ recipe_ingredients (junction table)
 - Dynamic add/remove ingredient rows
 
 ### Shopping List
-- Multi-select recipes
+- Independent recipe selector inside Shopping List view (no dependency on Recipe List)
+- Search box with real-time filtered clickable results
+- Selected recipes shown as removable filter chips (max 10 selected)
+- Keyboard support (arrow navigation + Enter to add)
 - Generate button
 - Display consolidated list grouped by category
 - Checkboxes for marking items as purchased
 
 ### Recipe Finder (by ingredients)
-- Checkbox list of all ingredients
-- "Find Recipes" button
+- Toggle between ingredient selection panel and suggestions panel
+- Dynamic suggestions update when ingredient selection changes (debounced)
+- Default-selected ingredients loaded from `ingredients.default_available`
+- Dedicated button to open Ingredient Defaults management view
 - Results sorted by match quality
 - Show match percentage and missing ingredients
+
+### Ingredient Defaults
+- Dedicated view for managing default ingredient availability
+- Search/filter all ingredients
+- Toggle each ingredient as default available (persisted in DB)
 
 ## Tech Stack
 
 - **Backend**: FastAPI + SQLite
 - **Frontend**: Vanilla JS + CSS (SPA pattern)
-- **Deployment**: Ansible + systemd (Tailscale-only access)
+- **Deployment**: Ansible + systemd (Tailscale/public host binding supported)
 
 ## Non-Goals (v1)
 
