@@ -489,6 +489,32 @@ label {
     text-decoration: underline;
 }
 
+.merge-ingredients-panel,
+.merge-history-panel {
+    margin-top: 1rem;
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 0.8rem;
+    background: #fff;
+}
+
+.merge-confirmation {
+    margin: 0.55rem 0;
+    align-items: flex-start;
+}
+
+.merge-confirmation input {
+    width: auto;
+    margin-top: 0.12rem;
+}
+
+.merge-history-item {
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    padding: 0.55rem;
+    background: #fff;
+}
+
 .step-list li {
     border: 1px solid var(--line);
     border-radius: 16px;

@@ -194,7 +194,7 @@
             <h2>Recipe Finder</h2>
             <div class="row gap">
                 <button id="finder-toggle-mode">Show Suggestions</button>
-                <button id="finder-manage-ingredients">Manage Default Ingredients</button>
+                <button id="finder-manage-ingredients">Manage Ingredients</button>
             </div>
             <section id="finder-select-panel">
                 <div id="finder-ingredients" class="ingredient-pool"></div>
@@ -208,13 +208,38 @@
 
     <template id="ingredients-view-template">
         <section class="panel">
-            <h2>Ingredient Defaults</h2>
+            <h2>Ingredients</h2>
             <label>
                 Search ingredients
                 <input id="ingredient-default-search" type="search" placeholder="Type to filter ingredients...">
             </label>
             <div id="ingredient-default-message" class="message"></div>
             <div id="ingredient-default-list" class="recipe-filter-list"></div>
+            <section class="merge-ingredients-panel">
+                <h3>Merge Ingredients</h3>
+                <p class="muted">Choose a primary ingredient to keep and a secondary ingredient to remove.</p>
+                <div class="row gap responsive">
+                    <label>Primary
+                        <select id="merge-primary"></select>
+                    </label>
+                    <label>Secondary
+                        <select id="merge-secondary"></select>
+                    </label>
+                </div>
+                <div class="row gap">
+                    <button type="button" id="merge-preview-btn">Preview Merge</button>
+                    <button type="button" id="merge-execute-btn">Merge Now</button>
+                </div>
+                <label class="row gap align-center merge-confirmation">
+                    <input id="merge-confirm-collision" type="checkbox">
+                    <span>I understand collision rows will remove the secondary ingredient from those recipes.</span>
+                </label>
+                <div id="merge-preview-output" class="import-preview hidden"></div>
+            </section>
+            <section class="merge-history-panel">
+                <h3>Merge History</h3>
+                <div id="merge-history-list" class="stack"></div>
+            </section>
         </section>
     </template>
 

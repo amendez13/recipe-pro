@@ -8,8 +8,8 @@ from app.config import AuthConfig, Config, DatabaseConfig, UserConfig, WebConfig
 
 @pytest.fixture
 def client(tmp_path):
-    user1_hash = hash_password("alice-pass")
-    user2_hash = hash_password("bob-pass")
+    user1_hash = hash_password("alice-pass", iterations=10_000)
+    user2_hash = hash_password("bob-pass", iterations=10_000)
     cfg = Config(
         web=WebConfig(host="127.0.0.1", port=8084),
         database=DatabaseConfig(path=str(tmp_path / "api.db")),
@@ -29,19 +29,19 @@ def client(tmp_path):
             ],
         ),
     )
-    test_client = TestClient(create_app(cfg))
-    login = test_client.post(
-        "/api/auth/login",
-        json={"username": "alice", "password": "alice-pass", "remember": True},
-    )
-    assert login.status_code == 200
-    return test_client
+    with TestClient(create_app(cfg)) as test_client:
+        login = test_client.post(
+            "/api/auth/login",
+            json={"username": "alice", "password": "alice-pass", "remember": True},
+        )
+        assert login.status_code == 200
+        yield test_client
 
 
 @pytest.fixture
 def auth_client(tmp_path):
-    user1_hash = hash_password("alice-pass")
-    user2_hash = hash_password("bob-pass")
+    user1_hash = hash_password("alice-pass", iterations=10_000)
+    user2_hash = hash_password("bob-pass", iterations=10_000)
     cfg = Config(
         web=WebConfig(host="127.0.0.1", port=8084),
         database=DatabaseConfig(path=str(tmp_path / "api.db")),
@@ -61,7 +61,8 @@ def auth_client(tmp_path):
             ],
         ),
     )
-    return TestClient(create_app(cfg))
+    with TestClient(create_app(cfg)) as test_client:
+        yield test_client
 
 
 def create_recipe(client: TestClient, title: str = "Pasta") -> dict:
@@ -132,12 +133,12 @@ def test_multi_user_data_isolation(tmp_path):
             users=[
                 UserConfig(
                     username="alice",
-                    password_hash=hash_password("alice-pass"),
+                    password_hash=hash_password("alice-pass", iterations=10_000),
                     db_path=str(tmp_path / "alice.db"),
                 ),
                 UserConfig(
                     username="bob",
-                    password_hash=hash_password("bob-pass"),
+                    password_hash=hash_password("bob-pass", iterations=10_000),
                     db_path=str(tmp_path / "bob.db"),
                 ),
             ],
@@ -145,31 +146,92 @@ def test_multi_user_data_isolation(tmp_path):
     )
 
     app = create_app(cfg)
-    alice = TestClient(app)
-    bob = TestClient(app)
+    with TestClient(app) as alice, TestClient(app) as bob:
+        assert alice.post("/api/auth/login", json={"username": "alice", "password": "alice-pass"}).status_code == 200
+        assert bob.post("/api/auth/login", json={"username": "bob", "password": "bob-pass"}).status_code == 200
 
-    assert alice.post("/api/auth/login", json={"username": "alice", "password": "alice-pass"}).status_code == 200
-    assert bob.post("/api/auth/login", json={"username": "bob", "password": "bob-pass"}).status_code == 200
+        alice_recipe = {
+            "title": "Alice Soup",
+            "steps": ["Boil water"],
+            "ingredients": [{"name": "Water", "quantity": 1, "unit": "cup"}],
+        }
+        bob_recipe = {
+            "title": "Bob Pasta",
+            "steps": ["Cook pasta"],
+            "ingredients": [{"name": "Pasta", "quantity": 1, "unit": "cup"}],
+        }
 
-    alice_recipe = {
-        "title": "Alice Soup",
-        "steps": ["Boil water"],
-        "ingredients": [{"name": "Water", "quantity": 1, "unit": "cup"}],
-    }
-    bob_recipe = {
-        "title": "Bob Pasta",
-        "steps": ["Cook pasta"],
-        "ingredients": [{"name": "Pasta", "quantity": 1, "unit": "cup"}],
-    }
+        assert alice.post("/api/recipes", json=alice_recipe).status_code == 201
+        assert bob.post("/api/recipes", json=bob_recipe).status_code == 201
 
-    assert alice.post("/api/recipes", json=alice_recipe).status_code == 201
-    assert bob.post("/api/recipes", json=bob_recipe).status_code == 201
+        alice_titles = [item["title"] for item in alice.get("/api/recipes").json()]
+        bob_titles = [item["title"] for item in bob.get("/api/recipes").json()]
 
-    alice_titles = [item["title"] for item in alice.get("/api/recipes").json()]
-    bob_titles = [item["title"] for item in bob.get("/api/recipes").json()]
+        assert alice_titles == ["Alice Soup"]
+        assert bob_titles == ["Bob Pasta"]
 
-    assert alice_titles == ["Alice Soup"]
-    assert bob_titles == ["Bob Pasta"]
+
+def test_ingredient_merge_endpoints(auth_client):
+    login = auth_client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "alice-pass", "remember": True},
+    )
+    assert login.status_code == 200
+
+    r1 = auth_client.post(
+        "/api/recipes",
+        json={
+            "title": "Merge Recipe 1",
+            "steps": ["cook"],
+            "ingredients": [
+                {"name": "olive oil", "quantity": 1, "unit": "tbsp"},
+                {"name": "extra virgin olive oil", "quantity": 2, "unit": "tbsp"},
+            ],
+        },
+    )
+    assert r1.status_code == 201
+    r2 = auth_client.post(
+        "/api/recipes",
+        json={
+            "title": "Merge Recipe 2",
+            "steps": ["cook"],
+            "ingredients": [
+                {"name": "extra virgin olive oil", "quantity": 1, "unit": "tbsp"},
+            ],
+        },
+    )
+    assert r2.status_code == 201
+
+    ingredients = auth_client.get("/api/ingredients").json()
+    primary = next(i for i in ingredients if i["name"] == "olive oil")
+    secondary = next(i for i in ingredients if i["name"] == "extra virgin olive oil")
+
+    preview = auth_client.post(
+        "/api/ingredients/merge-preview",
+        json={"primary_id": primary["id"], "secondary_id": secondary["id"]},
+    )
+    assert preview.status_code == 200
+    assert preview.json()["collision_recipe_count"] == 1
+
+    must_confirm = auth_client.post(
+        "/api/ingredients/merge",
+        json={"primary_id": primary["id"], "secondary_id": secondary["id"], "confirm_collision_drop": False},
+    )
+    assert must_confirm.status_code == 409
+
+    merged = auth_client.post(
+        "/api/ingredients/merge",
+        json={"primary_id": primary["id"], "secondary_id": secondary["id"], "confirm_collision_drop": True},
+    )
+    assert merged.status_code == 200
+    merge_event_id = merged.json()["merge_event_id"]
+
+    history = auth_client.get("/api/ingredients/merge-history")
+    assert history.status_code == 200
+    assert any(item["id"] == merge_event_id for item in history.json())
+
+    undone = auth_client.post(f"/api/ingredients/merge/{merge_event_id}/undo")
+    assert undone.status_code == 200
 
 
 def test_recipe_crud_and_search(client):

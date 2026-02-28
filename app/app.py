@@ -69,6 +69,17 @@ class IngredientPreferencePayload(BaseModel):
     default_available: bool
 
 
+class IngredientMergePayload(BaseModel):
+    primary_id: int = Field(gt=0)
+    secondary_id: int = Field(gt=0)
+    confirm_collision_drop: bool = False
+
+
+class IngredientMergePreviewPayload(BaseModel):
+    primary_id: int = Field(gt=0)
+    secondary_id: int = Field(gt=0)
+
+
 class RecipePayload(BaseModel):
     title: str = Field(min_length=1)
     instructions: str = ""
@@ -667,6 +678,61 @@ def create_app(config: Config | None = None) -> FastAPI:
         if updated is None:
             raise HTTPException(status_code=404, detail="Ingredient not found")
         return updated.to_dict()
+
+    @app.post("/api/ingredients/merge-preview")
+    async def ingredient_merge_preview(
+        request: Request,
+        data: IngredientMergePreviewPayload,
+    ) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        try:
+            return db.get_ingredient_merge_preview(data.primary_id, data.secondary_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/ingredients/merge")
+    async def ingredient_merge(
+        request: Request,
+        data: IngredientMergePayload,
+    ) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        try:
+            return db.merge_ingredients(
+                primary_id=data.primary_id,
+                secondary_id=data.secondary_id,
+                confirm_collision_drop=data.confirm_collision_drop,
+            )
+        except RuntimeError as exc:
+            if "confirmation required" in str(exc).lower():
+                raise HTTPException(
+                    status_code=409,
+                    detail="Collision confirmation required",
+                ) from exc
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/ingredients/merge/{merge_event_id}/undo")
+    async def ingredient_merge_undo(
+        request: Request,
+        merge_event_id: int,
+    ) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        try:
+            return db.undo_ingredient_merge(merge_event_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    @app.get("/api/ingredients/merge-history")
+    async def ingredient_merge_history(request: Request) -> list[dict[str, Any]]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        return db.list_ingredient_merge_history(limit=50)
 
     @app.get("/api/stats")
     async def get_stats(request: Request) -> dict[str, Any]:

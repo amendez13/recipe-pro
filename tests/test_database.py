@@ -148,3 +148,56 @@ def test_recipe_steps_fallback_from_instructions(tmp_path):
         }
     )
     assert [step.instruction for step in created.steps] == ["First line", "Second line"]
+
+
+def test_ingredient_merge_preview_merge_and_undo(tmp_path):
+    db = RecipeDatabase(tmp_path / "test.db")
+    recipe_a = db.create_recipe(
+        {
+            "title": "A",
+            "steps": ["Cook"],
+            "ingredients": [
+                {"name": "olive oil", "quantity": 1, "unit": "tbsp"},
+                {"name": "extra virgin olive oil", "quantity": 2, "unit": "tbsp"},
+            ],
+        }
+    )
+    recipe_b = db.create_recipe(
+        {
+            "title": "B",
+            "steps": ["Cook"],
+            "ingredients": [
+                {"name": "extra virgin olive oil", "quantity": 3, "unit": "tbsp"},
+            ],
+        }
+    )
+
+    ingredients = db.get_all_ingredients()
+    primary = next(i for i in ingredients if i.name == "olive oil")
+    secondary = next(i for i in ingredients if i.name == "extra virgin olive oil")
+
+    preview = db.get_ingredient_merge_preview(primary.id, secondary.id)
+    assert preview["secondary_recipe_count"] == 2
+    assert preview["collision_recipe_count"] == 1
+
+    merged = db.merge_ingredients(primary.id, secondary.id, confirm_collision_drop=True)
+    assert merged["dropped_collision_rows"] == 1
+    assert merged["repointed_rows"] == 1
+    assert db.get_ingredient_by_id(secondary.id) is None
+
+    recipe_a_loaded = db.get_recipe_by_id(recipe_a.id)
+    recipe_b_loaded = db.get_recipe_by_id(recipe_b.id)
+    assert recipe_a_loaded is not None
+    assert recipe_b_loaded is not None
+    names_a = [row.ingredient.name for row in recipe_a_loaded.ingredients if row.ingredient]
+    names_b = [row.ingredient.name for row in recipe_b_loaded.ingredients if row.ingredient]
+    assert names_a.count("olive oil") == 1
+    assert "extra virgin olive oil" not in names_a
+    assert names_b == ["olive oil"]
+
+    undone = db.undo_ingredient_merge(merged["merge_event_id"])
+    restored_name = undone["restored_secondary_name"]
+    restored = next(i for i in db.get_all_ingredients() if i.name == restored_name)
+    assert restored is not None
+    restored_preview = db.get_ingredient_merge_preview(primary.id, restored.id)
+    assert restored_preview["secondary_recipe_count"] == 2

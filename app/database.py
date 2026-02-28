@@ -122,6 +122,34 @@ class RecipeDatabase:
                 ON recipes(title)
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ingredient_merge_events (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    primary_ingredient_id_before INTEGER NOT NULL,
+                    secondary_ingredient_id_before INTEGER NOT NULL,
+                    primary_name_before TEXT NOT NULL,
+                    secondary_name_before TEXT NOT NULL,
+                    secondary_category_before TEXT,
+                    merged_at TEXT NOT NULL,
+                    undone_at TEXT
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS ingredient_merge_event_rows (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    merge_event_id INTEGER NOT NULL,
+                    recipe_id INTEGER NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('repointed', 'deleted_secondary_collision')),
+                    row_snapshot_quantity REAL NOT NULL,
+                    row_snapshot_unit TEXT NOT NULL,
+                    row_snapshot_notes TEXT,
+                    FOREIGN KEY (merge_event_id) REFERENCES ingredient_merge_events(id) ON DELETE CASCADE
+                )
+                """
+            )
             conn.commit()
 
     @staticmethod
@@ -588,3 +616,315 @@ class RecipeDatabase:
             "ingredient_count": ingredient_count,
             "category_counts": {row["category"]: row["count"] for row in category_rows},
         }
+
+    def get_ingredient_merge_preview(self, primary_id: int, secondary_id: int) -> dict[str, Any]:
+        if primary_id == secondary_id:
+            raise ValueError("Primary and secondary ingredients must be different")
+
+        with self._connect() as conn:
+            primary = conn.execute(
+                "SELECT id, name, category FROM ingredients WHERE id = ?",
+                (primary_id,),
+            ).fetchone()
+            secondary = conn.execute(
+                "SELECT id, name, category FROM ingredients WHERE id = ?",
+                (secondary_id,),
+            ).fetchone()
+            if not primary or not secondary:
+                raise ValueError("Ingredient not found")
+
+            primary_recipe_ids = {
+                row["recipe_id"]
+                for row in conn.execute(
+                    "SELECT recipe_id FROM recipe_ingredients WHERE ingredient_id = ?",
+                    (primary_id,),
+                ).fetchall()
+            }
+            secondary_recipe_rows = conn.execute(
+                "SELECT recipe_id FROM recipe_ingredients WHERE ingredient_id = ?",
+                (secondary_id,),
+            ).fetchall()
+            secondary_recipe_ids = {row["recipe_id"] for row in secondary_recipe_rows}
+            collision_recipe_ids = sorted(primary_recipe_ids.intersection(secondary_recipe_ids))
+            collision_titles: list[str] = []
+            if collision_recipe_ids:
+                placeholders = ",".join("?" for _ in collision_recipe_ids)
+                collision_title_rows = conn.execute(
+                    f"SELECT title FROM recipes WHERE id IN ({placeholders}) ORDER BY title ASC",
+                    tuple(collision_recipe_ids),
+                ).fetchall()
+                collision_titles = [row["title"] for row in collision_title_rows]
+
+        return {
+            "primary": {"id": primary["id"], "name": primary["name"]},
+            "secondary": {"id": secondary["id"], "name": secondary["name"]},
+            "secondary_recipe_count": len(secondary_recipe_ids),
+            "collision_recipe_count": len(collision_recipe_ids),
+            "collision_recipe_titles": collision_titles,
+            "requires_collision_confirmation": len(collision_recipe_ids) > 0,
+        }
+
+    def merge_ingredients(
+        self,
+        primary_id: int,
+        secondary_id: int,
+        confirm_collision_drop: bool = False,
+    ) -> dict[str, Any]:
+        preview = self.get_ingredient_merge_preview(primary_id, secondary_id)
+        collision_count = int(preview["collision_recipe_count"])
+        if collision_count > 0 and not confirm_collision_drop:
+            raise RuntimeError("Collision confirmation required")
+
+        now = datetime.now(UTC).isoformat()
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            primary = conn.execute(
+                "SELECT id, name FROM ingredients WHERE id = ?",
+                (primary_id,),
+            ).fetchone()
+            secondary = conn.execute(
+                "SELECT id, name, category FROM ingredients WHERE id = ?",
+                (secondary_id,),
+            ).fetchone()
+            if not primary or not secondary:
+                conn.execute("ROLLBACK")
+                raise ValueError("Ingredient not found")
+
+            primary_recipe_ids = {
+                row["recipe_id"]
+                for row in conn.execute(
+                    "SELECT recipe_id FROM recipe_ingredients WHERE ingredient_id = ?",
+                    (primary_id,),
+                ).fetchall()
+            }
+            secondary_rows = conn.execute(
+                """
+                SELECT id, recipe_id, quantity, unit, notes
+                FROM recipe_ingredients
+                WHERE ingredient_id = ?
+                ORDER BY id ASC
+                """,
+                (secondary_id,),
+            ).fetchall()
+            collision_recipe_ids = {
+                row["recipe_id"] for row in secondary_rows if row["recipe_id"] in primary_recipe_ids
+            }
+            merge_event_id = conn.execute(
+                """
+                INSERT INTO ingredient_merge_events (
+                    primary_ingredient_id_before,
+                    secondary_ingredient_id_before,
+                    primary_name_before,
+                    secondary_name_before,
+                    secondary_category_before,
+                    merged_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    primary["id"],
+                    secondary["id"],
+                    primary["name"],
+                    secondary["name"],
+                    secondary["category"],
+                    now,
+                ),
+            ).lastrowid
+
+            repointed_rows = 0
+            dropped_collision_rows = 0
+            for row in secondary_rows:
+                recipe_id = int(row["recipe_id"])
+                action = "deleted_secondary_collision" if recipe_id in collision_recipe_ids else "repointed"
+                conn.execute(
+                    """
+                    INSERT INTO ingredient_merge_event_rows (
+                        merge_event_id,
+                        recipe_id,
+                        action,
+                        row_snapshot_quantity,
+                        row_snapshot_unit,
+                        row_snapshot_notes
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        merge_event_id,
+                        recipe_id,
+                        action,
+                        float(row["quantity"] or 0.0),
+                        str(row["unit"] or ""),
+                        row["notes"],
+                    ),
+                )
+
+                if action == "deleted_secondary_collision":
+                    conn.execute("DELETE FROM recipe_ingredients WHERE id = ?", (row["id"],))
+                    dropped_collision_rows += 1
+                else:
+                    conn.execute(
+                        "UPDATE recipe_ingredients SET ingredient_id = ? WHERE id = ?",
+                        (primary_id, row["id"]),
+                    )
+                    repointed_rows += 1
+
+            conn.execute("DELETE FROM ingredients WHERE id = ?", (secondary_id,))
+            conn.commit()
+
+        return {
+            "merge_event_id": merge_event_id,
+            "primary": {"id": primary_id, "name": preview["primary"]["name"]},
+            "secondary": {"id": secondary_id, "name": preview["secondary"]["name"]},
+            "repointed_rows": repointed_rows,
+            "dropped_collision_rows": dropped_collision_rows,
+            "collision_recipe_count": collision_count,
+        }
+
+    def undo_ingredient_merge(self, merge_event_id: int) -> dict[str, Any]:
+        with self._connect() as conn:
+            conn.execute("BEGIN")
+            event = conn.execute(
+                """
+                SELECT
+                    id,
+                    primary_ingredient_id_before,
+                    secondary_ingredient_id_before,
+                    secondary_name_before,
+                    secondary_category_before,
+                    undone_at
+                FROM ingredient_merge_events
+                WHERE id = ?
+                """,
+                (merge_event_id,),
+            ).fetchone()
+            if not event:
+                conn.execute("ROLLBACK")
+                raise ValueError("Merge event not found")
+            if event["undone_at"] is not None:
+                conn.execute("ROLLBACK")
+                raise RuntimeError("Merge event already undone")
+
+            secondary_name = str(event["secondary_name_before"])
+            existing = conn.execute(
+                "SELECT id FROM ingredients WHERE name = ?",
+                (secondary_name,),
+            ).fetchone()
+            if existing:
+                suffix = datetime.now(UTC).strftime("%Y%m%d%H%M%S")
+                secondary_name = f"{secondary_name} (restored {suffix})"
+
+            recreated_secondary_id = conn.execute(
+                "INSERT INTO ingredients (name, category) VALUES (?, ?)",
+                (secondary_name, event["secondary_category_before"]),
+            ).lastrowid
+
+            event_rows = conn.execute(
+                """
+                SELECT recipe_id, action, row_snapshot_quantity, row_snapshot_unit, row_snapshot_notes
+                FROM ingredient_merge_event_rows
+                WHERE merge_event_id = ?
+                ORDER BY id ASC
+                """,
+                (merge_event_id,),
+            ).fetchall()
+
+            restored_repointed = 0
+            restored_collisions = 0
+            primary_id = int(event["primary_ingredient_id_before"])
+            for row in event_rows:
+                recipe_id = int(row["recipe_id"])
+                quantity = float(row["row_snapshot_quantity"] or 0.0)
+                unit = str(row["row_snapshot_unit"] or "")
+                notes = row["row_snapshot_notes"]
+
+                if row["action"] == "repointed":
+                    if notes is None:
+                        cursor = conn.execute(
+                            """
+                            UPDATE recipe_ingredients
+                            SET ingredient_id = ?
+                            WHERE recipe_id = ?
+                              AND ingredient_id = ?
+                              AND quantity = ?
+                              AND unit = ?
+                              AND notes IS NULL
+                            """,
+                            (recreated_secondary_id, recipe_id, primary_id, quantity, unit),
+                        )
+                    else:
+                        cursor = conn.execute(
+                            """
+                            UPDATE recipe_ingredients
+                            SET ingredient_id = ?
+                            WHERE recipe_id = ?
+                              AND ingredient_id = ?
+                              AND quantity = ?
+                              AND unit = ?
+                              AND notes = ?
+                            """,
+                            (recreated_secondary_id, recipe_id, primary_id, quantity, unit, notes),
+                        )
+                    if cursor.rowcount > 0:
+                        restored_repointed += cursor.rowcount
+                    continue
+
+                existing_secondary = conn.execute(
+                    """
+                    SELECT id FROM recipe_ingredients
+                    WHERE recipe_id = ? AND ingredient_id = ?
+                    """,
+                    (recipe_id, recreated_secondary_id),
+                ).fetchone()
+                if existing_secondary:
+                    continue
+                conn.execute(
+                    """
+                    INSERT INTO recipe_ingredients (recipe_id, ingredient_id, quantity, unit, notes)
+                    VALUES (?, ?, ?, ?, ?)
+                    """,
+                    (recipe_id, recreated_secondary_id, quantity, unit, notes),
+                )
+                restored_collisions += 1
+
+            conn.execute(
+                "UPDATE ingredient_merge_events SET undone_at = ? WHERE id = ?",
+                (datetime.now(UTC).isoformat(), merge_event_id),
+            )
+            conn.commit()
+
+        return {
+            "merge_event_id": merge_event_id,
+            "restored_secondary_id": recreated_secondary_id,
+            "restored_secondary_name": secondary_name,
+            "restored_repointed_rows": restored_repointed,
+            "restored_collision_rows": restored_collisions,
+        }
+
+    def list_ingredient_merge_history(self, limit: int = 20) -> list[dict[str, Any]]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT
+                    id,
+                    primary_ingredient_id_before,
+                    secondary_ingredient_id_before,
+                    primary_name_before,
+                    secondary_name_before,
+                    merged_at,
+                    undone_at
+                FROM ingredient_merge_events
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "primary_ingredient_id_before": row["primary_ingredient_id_before"],
+                "secondary_ingredient_id_before": row["secondary_ingredient_id_before"],
+                "primary_name_before": row["primary_name_before"],
+                "secondary_name_before": row["secondary_name_before"],
+                "merged_at": row["merged_at"],
+                "undone_at": row["undone_at"],
+            }
+            for row in rows
+        ]

@@ -109,6 +109,28 @@ const api = {
             throw new Error(detail);
         });
     },
+    getIngredientMergePreview(payload) {
+        return this.request('/api/ingredients/merge-preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
+    mergeIngredients(payload) {
+        return this.request('/api/ingredients/merge', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
+    undoIngredientMerge(mergeEventId) {
+        return this.request(`/api/ingredients/merge/${mergeEventId}/undo`, {
+            method: 'POST',
+        });
+    },
+    getIngredientMergeHistory() {
+        return this.request('/api/ingredients/merge-history');
+    },
     getShoppingList(recipe_ids) {
         return this.request('/api/shopping-list', {
             method: 'POST',
@@ -1009,7 +1031,15 @@ async function renderIngredientsView() {
     const listEl = document.getElementById('ingredient-default-list');
     const messageEl = document.getElementById('ingredient-default-message');
     const searchEl = document.getElementById('ingredient-default-search');
+    const mergePrimaryEl = document.getElementById('merge-primary');
+    const mergeSecondaryEl = document.getElementById('merge-secondary');
+    const mergePreviewBtn = document.getElementById('merge-preview-btn');
+    const mergeExecuteBtn = document.getElementById('merge-execute-btn');
+    const mergeConfirmCollisionEl = document.getElementById('merge-confirm-collision');
+    const mergePreviewOutputEl = document.getElementById('merge-preview-output');
+    const mergeHistoryListEl = document.getElementById('merge-history-list');
     let ingredients = [];
+    let latestPreview = null;
 
     function renderList(search = '') {
         const term = search.trim().toLowerCase();
@@ -1049,11 +1079,137 @@ async function renderIngredientsView() {
         });
     }
 
+    function renderMergeSelectors() {
+        mergePrimaryEl.innerHTML = '';
+        mergeSecondaryEl.innerHTML = '';
+        const sorted = [...ingredients].sort((a, b) => a.name.localeCompare(b.name));
+        sorted.forEach((ingredient) => {
+            const optionPrimary = document.createElement('option');
+            optionPrimary.value = String(ingredient.id);
+            optionPrimary.textContent = ingredient.name;
+            mergePrimaryEl.appendChild(optionPrimary);
+
+            const optionSecondary = document.createElement('option');
+            optionSecondary.value = String(ingredient.id);
+            optionSecondary.textContent = ingredient.name;
+            mergeSecondaryEl.appendChild(optionSecondary);
+        });
+        if (sorted.length >= 2) {
+            mergePrimaryEl.value = String(sorted[0].id);
+            mergeSecondaryEl.value = String(sorted[1].id);
+        }
+    }
+
+    async function renderMergeHistory() {
+        mergeHistoryListEl.innerHTML = '';
+        try {
+            const history = await api.getIngredientMergeHistory();
+            if (!history.length) {
+                mergeHistoryListEl.innerHTML = '<p class="muted">No merge operations yet.</p>';
+                return;
+            }
+            history.forEach((eventItem) => {
+                const row = document.createElement('div');
+                row.className = 'merge-history-item';
+                const undone = !!eventItem.undone_at;
+                row.innerHTML = `
+                    <p><strong>${escapeHtml(eventItem.secondary_name_before)}</strong> → <strong>${escapeHtml(eventItem.primary_name_before)}</strong></p>
+                    <p class="muted">Merged: ${escapeHtml(eventItem.merged_at)}${undone ? ` | Undone: ${escapeHtml(eventItem.undone_at)}` : ''}</p>
+                    ${undone ? '' : `<button type="button" data-undo-merge-id="${eventItem.id}">Undo</button>`}
+                `;
+                mergeHistoryListEl.appendChild(row);
+            });
+            mergeHistoryListEl.querySelectorAll('[data-undo-merge-id]').forEach((button) => {
+                button.addEventListener('click', async () => {
+                    const mergeEventId = Number(button.dataset.undoMergeId);
+                    try {
+                        const result = await api.undoIngredientMerge(mergeEventId);
+                        setMessage(
+                            messageEl,
+                            `Undo complete. Restored ${result.restored_secondary_name}.`,
+                        );
+                        ingredients = await api.getIngredients();
+                        renderList(searchEl.value);
+                        renderMergeSelectors();
+                        await renderMergeHistory();
+                    } catch (err) {
+                        setMessage(messageEl, `Failed to undo merge: ${err.message}`, true);
+                    }
+                });
+            });
+        } catch (err) {
+            mergeHistoryListEl.innerHTML = `<p class="message error">Failed to load merge history: ${escapeHtml(err.message)}</p>`;
+        }
+    }
+
+    mergePreviewBtn.addEventListener('click', async () => {
+        const primaryId = Number(mergePrimaryEl.value);
+        const secondaryId = Number(mergeSecondaryEl.value);
+        if (!primaryId || !secondaryId || primaryId === secondaryId) {
+            setMessage(messageEl, 'Choose two different ingredients for merge.', true);
+            return;
+        }
+        try {
+            latestPreview = await api.getIngredientMergePreview({
+                primary_id: primaryId,
+                secondary_id: secondaryId,
+            });
+            mergePreviewOutputEl.classList.remove('hidden');
+            const hasCollision = latestPreview.collision_recipe_count > 0;
+            mergePreviewOutputEl.innerHTML = `
+                <h4>Merge Preview</h4>
+                <p><strong>Primary:</strong> ${escapeHtml(latestPreview.primary.name)}</p>
+                <p><strong>Secondary:</strong> ${escapeHtml(latestPreview.secondary.name)}</p>
+                <p><strong>Secondary usages:</strong> ${latestPreview.secondary_recipe_count}</p>
+                <p><strong>Collisions:</strong> ${latestPreview.collision_recipe_count}</p>
+                ${hasCollision ? `<p class="message error">Warning: in collision recipes, secondary will be removed.</p>` : ''}
+                ${hasCollision && latestPreview.collision_recipe_titles.length ? `<p class="muted">Recipes: ${escapeHtml(latestPreview.collision_recipe_titles.join(', '))}</p>` : ''}
+            `;
+            setMessage(messageEl, 'Merge preview ready.');
+        } catch (err) {
+            latestPreview = null;
+            mergePreviewOutputEl.classList.add('hidden');
+            setMessage(messageEl, `Failed to preview merge: ${err.message}`, true);
+        }
+    });
+
+    mergeExecuteBtn.addEventListener('click', async () => {
+        const primaryId = Number(mergePrimaryEl.value);
+        const secondaryId = Number(mergeSecondaryEl.value);
+        if (!primaryId || !secondaryId || primaryId === secondaryId) {
+            setMessage(messageEl, 'Choose two different ingredients for merge.', true);
+            return;
+        }
+        const confirmCollisionDrop = mergeConfirmCollisionEl.checked;
+        try {
+            const result = await api.mergeIngredients({
+                primary_id: primaryId,
+                secondary_id: secondaryId,
+                confirm_collision_drop: confirmCollisionDrop,
+            });
+            setMessage(
+                messageEl,
+                `Merged ${result.secondary.name} into ${result.primary.name}. Repointed ${result.repointed_rows}, removed collisions ${result.dropped_collision_rows}.`,
+            );
+            mergePreviewOutputEl.classList.add('hidden');
+            mergeConfirmCollisionEl.checked = false;
+            latestPreview = null;
+            ingredients = await api.getIngredients();
+            renderList(searchEl.value);
+            renderMergeSelectors();
+            await renderMergeHistory();
+        } catch (err) {
+            setMessage(messageEl, `Merge failed: ${err.message}`, true);
+        }
+    });
+
     searchEl.addEventListener('input', () => renderList(searchEl.value));
 
     try {
         ingredients = await api.getIngredients();
         renderList();
+        renderMergeSelectors();
+        await renderMergeHistory();
     } catch (err) {
         setMessage(messageEl, `Failed to load ingredients: ${err.message}`, true);
     }
