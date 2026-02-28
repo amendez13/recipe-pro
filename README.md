@@ -2,6 +2,8 @@
 
 Recipe Pro is a FastAPI + SQLite web app for managing recipes, cooking from a readable detail view, generating shopping lists, and finding recipes by available ingredients.
 
+The app now runs in **multi-user mode** with exactly two users, each isolated to a dedicated SQLite database.
+
 ## Features
 
 - Recipe CRUD with normalized shared ingredients
@@ -35,8 +37,29 @@ web:
   host: "100.84.173.75"
   port: 8084
 
-database:
-  path: "/home/admin/projects/idea-canvas/data/ideas.db"
+auth:
+  session_secret: "${RECIPE_PRO_SESSION_SECRET}"
+  session_cookie_name: "recipe_pro_session"
+  session_max_age_seconds: 2592000
+  session_secure: false
+  users:
+    - username: "user1"
+      password_hash: "pbkdf2_sha256$<iterations>$<salt>$<hash>"
+      db_path: "/home/admin/projects/idea-canvas/data/user1.db"
+    - username: "user2"
+      password_hash: "pbkdf2_sha256$<iterations>$<salt>$<hash>"
+      db_path: "/home/admin/projects/idea-canvas/data/user2.db"
+```
+
+### Generate Password Hashes
+
+Use the built-in helper:
+
+```bash
+.venv/bin/python - <<'PY'
+from app.auth import hash_password
+print(hash_password("replace-with-strong-password"))
+PY
 ```
 
 ## API Summary
@@ -64,6 +87,12 @@ database:
 
 - `GET /health`
 
+### Authentication
+
+- `POST /api/auth/login`
+- `POST /api/auth/logout`
+- `GET /api/auth/me`
+
 ## Test
 
 ```bash
@@ -87,3 +116,10 @@ Systemd (same VPS, Tailscale network):
 sudo systemctl restart idea-canvas
 sudo systemctl status idea-canvas --no-pager
 ```
+
+Multi-user rollout checklist:
+
+1. Set `auth.users` (exactly two users) with unique `db_path` values.
+2. Generate and set password hashes (never store plaintext passwords).
+3. Set `auth.session_secret` to a strong random value.
+4. Restart service and verify login + user isolation behavior.

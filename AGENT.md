@@ -4,6 +4,8 @@
 
 Recipe Pro is a FastAPI web application for managing recipes with a focus on usability while cooking. The app provides convenient recipe entry, clear presentation during cooking, and smart features for shopping list generation and ingredient-based recipe discovery.
 
+The app runs with two-user authentication and strict per-user data isolation (each user has their own SQLite database).
+
 ## Core Functionality
 
 ### Recipe Management
@@ -74,6 +76,11 @@ recipe_ingredients (junction table)
 └── notes (optional: "diced", "room temperature", etc.)
 ```
 
+### Multi-user Isolation
+- The system is configured for exactly 2 users.
+- Each user has a dedicated SQLite database file (`db_path`) and only accesses their own data.
+- All recipe APIs require authenticated session cookies.
+
 ### Key Constraints
 - Ingredients are **unique references** - same ingredient used across multiple recipes points to same record
 - Ingredient names are normalized (lowercase, trimmed) for deduplication
@@ -108,6 +115,11 @@ recipe_ingredients (junction table)
 
 ### Stats
 - `GET /api/stats` - Recipe count, ingredient count, etc.
+
+### Authentication
+- `POST /api/auth/login` - Username/password login, sets auth cookie
+- `POST /api/auth/logout` - Clears auth cookie
+- `GET /api/auth/me` - Returns current authenticated user
 
 ## UI Views
 
@@ -159,7 +171,6 @@ recipe_ingredients (junction table)
 
 ## Non-Goals (v1)
 
-- User authentication (single-user app)
 - Image upload for recipes
 - Meal planning calendar
 - Nutritional information
