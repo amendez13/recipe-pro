@@ -14,7 +14,7 @@ const state = {
 };
 
 const api = {
-    async request(url, options = {}) {
+    async request(url, options = {}, meta = {}) {
         const response = await fetch(url, options);
         if (!response.ok) {
             let detail = 'Request failed';
@@ -23,6 +23,13 @@ const api = {
                 detail = body.detail || JSON.stringify(body);
             } catch (_) {
                 detail = response.statusText;
+            }
+            if (response.status === 401 && !meta.suppressAuthRedirect) {
+                state.authUser = null;
+                state.route = 'login';
+                state.authReady = true;
+                renderHeaderAuth();
+                render();
             }
             throw new Error(detail);
         }
@@ -128,13 +135,13 @@ const api = {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload),
-        });
+        }, { suppressAuthRedirect: true });
     },
     logout() {
         return this.request('/api/auth/logout', { method: 'POST' });
     },
     me() {
-        return this.request('/api/auth/me');
+        return this.request('/api/auth/me', {}, { suppressAuthRedirect: true });
     },
 };
 
