@@ -42,6 +42,7 @@
 - Ingredient endpoints are read-only; ingredient records are created/updated via recipe writes.
 - Shopping list endpoint computes consolidated items on-demand (not persisted).
 - Suggestions endpoint computes match percentage and matched/missing ingredient names on-demand.
+- Auth endpoints manage session cookies (`/api/auth/login`, `/api/auth/logout`, `/api/auth/me`).
 
 ## Frontend Views
 
@@ -50,3 +51,13 @@
 - Add/edit recipe form with dynamic ingredient rows
 - Shopping list view grouped by category
 - Recipe finder view using ingredient selection + suggestions
+- Login view + authenticated app shell
+
+## Authentication and Isolation
+
+- Exactly 2 configured users are supported.
+- Each user maps to a dedicated SQLite database path.
+- All recipe-related APIs require an authenticated session.
+- Session failures (401) redirect the SPA to login.
+
+See: `docs/authentication.md`

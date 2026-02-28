@@ -103,6 +103,7 @@ pytest -q
 ## Architecture Docs
 
 - `docs/architecture.md`
+- `docs/authentication.md`
 - `docs/deployment.md`
 
 ## Deployment
