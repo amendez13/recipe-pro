@@ -6,6 +6,10 @@ database:
   path: "data/ideas.db"
 
 auth:
+  session_secret: "${RECIPE_PRO_SESSION_SECRET}"
+  session_cookie_name: "recipe_pro_session"
+  session_max_age_seconds: 2592000
+  session_secure: false
   users:
     - username: "user1"
       password_hash: "$2b$12$REPLACE_WITH_BCRYPT_HASH_FOR_USER1"

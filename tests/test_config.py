@@ -19,6 +19,7 @@ web:
   host: "127.0.0.1"
   port: 8084
 auth:
+  session_secret: "test-secret"
   users:
     - username: "a"
       password_hash: "hash-a"
@@ -38,6 +39,7 @@ web:
   host: "127.0.0.1"
   port: 8084
 auth:
+  session_secret: "test-secret"
   users:
     - username: "alice"
       password_hash: "hash-a"

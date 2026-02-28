@@ -32,6 +32,10 @@ class UserConfig:
 @dataclass
 class AuthConfig:
     users: list[UserConfig] = field(default_factory=list)
+    session_secret: str = ""
+    session_cookie_name: str = "recipe_pro_session"
+    session_max_age_seconds: int = 60 * 60 * 24 * 30
+    session_secure: bool = False
 
 
 @dataclass
@@ -113,7 +117,18 @@ def load_config(config_path: str | Path) -> Config:
         if not db_path:
             raise ValueError(f"Configuration error: auth.users[{index}].db_path is required")
         users.append(UserConfig(username=username, password_hash=password_hash, db_path=db_path))
-    config.auth = AuthConfig(users=users)
+    session_secret = str(auth.get("session_secret", "")).strip()
+    if not session_secret:
+        raise ValueError("Configuration error: auth.session_secret is required")
+
+    config.auth = AuthConfig(
+        users=users,
+        session_secret=session_secret,
+        session_cookie_name=str(auth.get("session_cookie_name", "recipe_pro_session")).strip()
+        or "recipe_pro_session",
+        session_max_age_seconds=int(auth.get("session_max_age_seconds", 60 * 60 * 24 * 30)),
+        session_secure=bool(auth.get("session_secure", False)),
+    )
 
     return config
 
