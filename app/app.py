@@ -13,11 +13,12 @@ from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, model_validator
 
+from .auth import create_session_token, decode_session_token, verify_credentials
 from .config import Config, get_default_config_path, load_config
 from .database import RecipeDatabase
 
@@ -107,6 +108,12 @@ class RecipeImportPayload(BaseModel):
         if has_url == has_text:
             raise ValueError("Provide exactly one import input: url or text")
         return self
+
+
+class LoginPayload(BaseModel):
+    username: str = Field(min_length=1)
+    password: str = Field(min_length=1)
+    remember: bool = True
 
 
 def _parse_fractional_number(value: str) -> Optional[float]:
@@ -465,9 +472,62 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
+    def _resolve_session_user(request: Request):
+        cookie_name = cfg.auth.session_cookie_name
+        token = request.cookies.get(cookie_name)
+        if not token:
+            return None
+        payload = decode_session_token(token, cfg.auth.session_secret)
+        if not payload:
+            return None
+        username = payload.get("u")
+        if not isinstance(username, str):
+            return None
+        for user in cfg.auth.users:
+            if user.username == username:
+                return user
+        return None
+
     @app.get("/")
     async def serve_index() -> FileResponse:
         return FileResponse(INDEX_FILE)
+
+    @app.post("/api/auth/login")
+    async def auth_login(data: LoginPayload, response: Response) -> dict[str, str]:
+        user = verify_credentials(data.username, data.password, cfg.auth.users)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Invalid credentials")
+
+        ttl_seconds = cfg.auth.session_max_age_seconds if data.remember else min(
+            cfg.auth.session_max_age_seconds, 60 * 60 * 12
+        )
+        token = create_session_token(user.username, cfg.auth.session_secret, ttl_seconds)
+        response.set_cookie(
+            key=cfg.auth.session_cookie_name,
+            value=token,
+            max_age=ttl_seconds,
+            httponly=True,
+            samesite="lax",
+            secure=cfg.auth.session_secure,
+            path="/",
+        )
+        return {"username": user.username}
+
+    @app.post("/api/auth/logout")
+    async def auth_logout(response: Response) -> dict[str, bool]:
+        response.delete_cookie(
+            key=cfg.auth.session_cookie_name,
+            path="/",
+            samesite="lax",
+        )
+        return {"success": True}
+
+    @app.get("/api/auth/me")
+    async def auth_me(request: Request) -> dict[str, str]:
+        user = _resolve_session_user(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return {"username": user.username}
 
     @app.get("/api/recipes")
     async def list_recipes(search: Optional[str] = None) -> list[dict[str, Any]]:

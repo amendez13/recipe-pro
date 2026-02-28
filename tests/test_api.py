@@ -2,7 +2,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.app import _extract_recipe_from_url, create_app
-from app.config import Config, DatabaseConfig, WebConfig
+from app.auth import hash_password
+from app.config import AuthConfig, Config, DatabaseConfig, UserConfig, WebConfig
 
 
 @pytest.fixture
@@ -10,6 +11,30 @@ def client(tmp_path):
     cfg = Config(
         web=WebConfig(host="127.0.0.1", port=8084),
         database=DatabaseConfig(path=str(tmp_path / "api.db")),
+    )
+    return TestClient(create_app(cfg))
+
+
+@pytest.fixture
+def auth_client(tmp_path):
+    cfg = Config(
+        web=WebConfig(host="127.0.0.1", port=8084),
+        database=DatabaseConfig(path=str(tmp_path / "api.db")),
+        auth=AuthConfig(
+            session_secret="test-session-secret",
+            users=[
+                UserConfig(
+                    username="alice",
+                    password_hash=hash_password("alice-pass"),
+                    db_path=str(tmp_path / "alice.db"),
+                ),
+                UserConfig(
+                    username="bob",
+                    password_hash=hash_password("bob-pass"),
+                    db_path=str(tmp_path / "bob.db"),
+                ),
+            ],
+        ),
     )
     return TestClient(create_app(cfg))
 
@@ -35,6 +60,34 @@ def test_health(client):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == {"status": "healthy"}
+
+
+def test_auth_login_me_logout(auth_client):
+    me_before = auth_client.get("/api/auth/me")
+    assert me_before.status_code == 401
+
+    bad_login = auth_client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "wrong", "remember": True},
+    )
+    assert bad_login.status_code == 401
+
+    login = auth_client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "alice-pass", "remember": True},
+    )
+    assert login.status_code == 200
+    assert login.json()["username"] == "alice"
+
+    me_after = auth_client.get("/api/auth/me")
+    assert me_after.status_code == 200
+    assert me_after.json() == {"username": "alice"}
+
+    logout = auth_client.post("/api/auth/logout")
+    assert logout.status_code == 200
+
+    me_after_logout = auth_client.get("/api/auth/me")
+    assert me_after_logout.status_code == 401
 
 
 def test_recipe_crud_and_search(client):
