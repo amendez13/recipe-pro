@@ -651,7 +651,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Ingredient not found")
         return updated.to_dict()
 
-    @app.post("/api/ingredients/{ingredient_id}")
+    @app.post("/api/ingredients/{ingredient_id:int}")
     async def update_ingredient_preference_post(
         request: Request, ingredient_id: int, data: IngredientPreferencePayload
     ) -> dict[str, Any]:
