@@ -90,6 +90,21 @@ h3 {
     flex-wrap: wrap;
 }
 
+.auth-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.auth-username {
+    font-size: 0.86rem;
+    color: var(--text-soft);
+    padding: 0.3rem 0.6rem;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: #fff;
+}
+
 .nav-actions button {
     border-radius: 999px;
     padding: 0.52rem 1.05rem;
@@ -113,6 +128,19 @@ h3 {
     padding: clamp(1rem, 2.2vw, 1.4rem);
     box-shadow: var(--shadow-soft);
     animation: rise-in 360ms ease-out;
+}
+
+.login-panel {
+    max-width: 480px;
+    margin: 2rem auto;
+}
+
+.remember-check {
+    font-size: 0.86rem;
+}
+
+.remember-check input {
+    width: auto;
 }
 
 .card {

@@ -13,6 +13,10 @@
                 <h1>Recipe Pro</h1>
                 <p>Comfort cooking, beautifully organized.</p>
             </div>
+            <div class="auth-controls">
+                <span id="auth-username" class="auth-username hidden"></span>
+                <button id="logout-btn" type="button" class="hidden">Log Out</button>
+            </div>
             <nav class="nav-actions">
                 <button data-route="list">Recipes</button>
                 <button data-route="add">Add Recipe</button>
@@ -23,6 +27,25 @@
     </header>
 
     <main class="shell" id="app-root"></main>
+
+    <template id="login-view-template">
+        <section class="panel login-panel">
+            <h2>Log In</h2>
+            <p class="muted">Sign in to access your personal recipe space.</p>
+            <form id="login-form" class="stack">
+                <label>Username<input id="login-username" autocomplete="username" required></label>
+                <label>Password<input id="login-password" type="password" autocomplete="current-password" required></label>
+                <label class="row gap align-center remember-check">
+                    <input id="login-remember" type="checkbox" checked>
+                    <span>Remember me on this browser</span>
+                </label>
+                <div class="row gap">
+                    <button type="submit">Log In</button>
+                </div>
+                <div id="login-message" class="message"></div>
+            </form>
+        </section>
+    </template>
 
     <template id="list-view-template">
         <section class="panel">

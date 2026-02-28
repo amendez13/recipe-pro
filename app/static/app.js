@@ -9,6 +9,8 @@ const state = {
     detailRecipeId: null,
     focusMode: false,
     focusStepIndex: 0,
+    authUser: null,
+    authReady: false,
 };
 
 const api = {
@@ -121,9 +123,27 @@ const api = {
             body: JSON.stringify(payload),
         });
     },
+    login(payload) {
+        return this.request('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+    },
+    logout() {
+        return this.request('/api/auth/logout', { method: 'POST' });
+    },
+    me() {
+        return this.request('/api/auth/me');
+    },
 };
 
 function nav(route, payload = null) {
+    if (route !== 'login' && !state.authUser) {
+        state.route = 'login';
+        render();
+        return;
+    }
     state.route = route;
     if (route === 'detail' && payload) {
         state.detailRecipeId = payload.id;
@@ -142,6 +162,36 @@ function nav(route, payload = null) {
 
 document.querySelectorAll('[data-route]').forEach((button) => {
     button.addEventListener('click', () => nav(button.dataset.route));
+});
+
+const authUsernameEl = document.getElementById('auth-username');
+const logoutBtnEl = document.getElementById('logout-btn');
+const navActionsEl = document.querySelector('.nav-actions');
+
+function renderHeaderAuth() {
+    if (state.authUser) {
+        authUsernameEl.textContent = state.authUser.username;
+        authUsernameEl.classList.remove('hidden');
+        logoutBtnEl.classList.remove('hidden');
+        navActionsEl.classList.remove('hidden');
+    } else {
+        authUsernameEl.textContent = '';
+        authUsernameEl.classList.add('hidden');
+        logoutBtnEl.classList.add('hidden');
+        navActionsEl.classList.add('hidden');
+    }
+}
+
+logoutBtnEl.addEventListener('click', async () => {
+    try {
+        await api.logout();
+    } catch (_) {
+        // Even if logout call fails, drop local auth state.
+    }
+    state.authUser = null;
+    state.route = 'login';
+    renderHeaderAuth();
+    render();
 });
 
 function setMessage(el, text, isError = false) {
@@ -168,6 +218,35 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = String(text ?? '');
     return div.innerHTML;
+}
+
+async function renderLoginView() {
+    root.innerHTML = '';
+    const node = document.getElementById('login-view-template').content.cloneNode(true);
+    root.appendChild(node);
+
+    const form = document.getElementById('login-form');
+    const messageEl = document.getElementById('login-message');
+    const usernameEl = document.getElementById('login-username');
+    const passwordEl = document.getElementById('login-password');
+    const rememberEl = document.getElementById('login-remember');
+
+    form.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        setMessage(messageEl, 'Signing in...');
+        try {
+            const session = await api.login({
+                username: usernameEl.value.trim(),
+                password: passwordEl.value,
+                remember: rememberEl.checked,
+            });
+            state.authUser = { username: session.username };
+            renderHeaderAuth();
+            nav('list');
+        } catch (err) {
+            setMessage(messageEl, err.message || 'Login failed', true);
+        }
+    });
 }
 
 async function renderListView() {
@@ -953,6 +1032,14 @@ async function renderIngredientsView() {
 }
 
 async function render() {
+    if (!state.authReady) {
+        return;
+    }
+    renderHeaderAuth();
+    if (!state.authUser) {
+        await renderLoginView();
+        return;
+    }
     if (state.route === 'list') {
         await renderListView();
         return;
@@ -992,4 +1079,17 @@ async function render() {
     nav('list');
 }
 
-render();
+async function bootstrapAuth() {
+    try {
+        const session = await api.me();
+        state.authUser = { username: session.username };
+        state.route = 'list';
+    } catch (_) {
+        state.authUser = null;
+        state.route = 'login';
+    } finally {
+        state.authReady = true;
+    }
+}
+
+bootstrapAuth().then(render);
