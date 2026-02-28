@@ -545,8 +545,6 @@ async function renderShoppingView() {
             highlightedSearchIndex = -1;
         } else if (highlightedSearchIndex >= filtered.length) {
             highlightedSearchIndex = filtered.length - 1;
-        } else if (highlightedSearchIndex < 0) {
-            highlightedSearchIndex = 0;
         }
         if (!filtered.length) {
             resultsEl.innerHTML = '<p class="muted">No matching recipes available.</p>';
@@ -572,7 +570,7 @@ async function renderShoppingView() {
                 }
                 state.shoppingRecipeIds.add(recipeId);
                 searchEl.value = '';
-                highlightedSearchIndex = 0;
+                highlightedSearchIndex = -1;
                 renderSelectionMeta();
                 renderSelectedFilters();
                 renderSearchResults('');
@@ -647,7 +645,7 @@ async function renderShoppingView() {
     });
 
     searchEl.addEventListener('input', () => {
-        highlightedSearchIndex = 0;
+        highlightedSearchIndex = -1;
         renderSearchResults(searchEl.value);
     });
     searchEl.addEventListener('keydown', (event) => {
@@ -668,7 +666,7 @@ async function renderShoppingView() {
         }
         if (event.key === 'Escape') {
             searchEl.value = '';
-            highlightedSearchIndex = 0;
+            highlightedSearchIndex = -1;
             renderSearchResults('');
             return;
         }
@@ -684,7 +682,7 @@ async function renderShoppingView() {
             }
             state.shoppingRecipeIds.add(highlighted.id);
             searchEl.value = '';
-            highlightedSearchIndex = 0;
+            highlightedSearchIndex = -1;
             renderSelectionMeta();
             renderSelectedFilters();
             renderSearchResults('');
