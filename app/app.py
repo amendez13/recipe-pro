@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.error import URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.request import Request as UrlRequest, urlopen
 
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.responses import FileResponse
@@ -259,7 +259,7 @@ def _find_recipe_node(candidate: Any) -> Optional[dict[str, Any]]:
 
 
 def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
-    request = Request(
+    request = UrlRequest(
         url,
         headers={
             "User-Agent": "Mozilla/5.0 (compatible; RecipePro/1.0; +https://example.local)",
