@@ -115,6 +115,62 @@ def test_auth_login_me_logout(auth_client):
     assert me_after_logout.status_code == 401
 
 
+def test_auth_required_for_protected_endpoints(auth_client):
+    response = auth_client.get("/api/recipes")
+    assert response.status_code == 401
+    response = auth_client.get("/api/ingredients")
+    assert response.status_code == 401
+
+
+def test_multi_user_data_isolation(tmp_path):
+    cfg = Config(
+        web=WebConfig(host="127.0.0.1", port=8084),
+        database=DatabaseConfig(path=str(tmp_path / "api.db")),
+        auth=AuthConfig(
+            session_secret="isolation-secret",
+            users=[
+                UserConfig(
+                    username="alice",
+                    password_hash=hash_password("alice-pass"),
+                    db_path=str(tmp_path / "alice.db"),
+                ),
+                UserConfig(
+                    username="bob",
+                    password_hash=hash_password("bob-pass"),
+                    db_path=str(tmp_path / "bob.db"),
+                ),
+            ],
+        ),
+    )
+
+    app = create_app(cfg)
+    alice = TestClient(app)
+    bob = TestClient(app)
+
+    assert alice.post("/api/auth/login", json={"username": "alice", "password": "alice-pass"}).status_code == 200
+    assert bob.post("/api/auth/login", json={"username": "bob", "password": "bob-pass"}).status_code == 200
+
+    alice_recipe = {
+        "title": "Alice Soup",
+        "steps": ["Boil water"],
+        "ingredients": [{"name": "Water", "quantity": 1, "unit": "cup"}],
+    }
+    bob_recipe = {
+        "title": "Bob Pasta",
+        "steps": ["Cook pasta"],
+        "ingredients": [{"name": "Pasta", "quantity": 1, "unit": "cup"}],
+    }
+
+    assert alice.post("/api/recipes", json=alice_recipe).status_code == 201
+    assert bob.post("/api/recipes", json=bob_recipe).status_code == 201
+
+    alice_titles = [item["title"] for item in alice.get("/api/recipes").json()]
+    bob_titles = [item["title"] for item in bob.get("/api/recipes").json()]
+
+    assert alice_titles == ["Alice Soup"]
+    assert bob_titles == ["Bob Pasta"]
+
+
 def test_recipe_crud_and_search(client):
     created = create_recipe(client, "Pasta Carbonara")
 
