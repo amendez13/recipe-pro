@@ -23,9 +23,22 @@ class DatabaseConfig:
 
 
 @dataclass
+class UserConfig:
+    username: str
+    password_hash: str
+    db_path: str
+
+
+@dataclass
+class AuthConfig:
+    users: list[UserConfig] = field(default_factory=list)
+
+
+@dataclass
 class Config:
     web: WebConfig = field(default_factory=WebConfig)
     database: DatabaseConfig = field(default_factory=DatabaseConfig)
+    auth: AuthConfig = field(default_factory=AuthConfig)
 
 
 def _resolve_env_vars(value: str) -> str:
@@ -78,6 +91,29 @@ def load_config(config_path: str | Path) -> Config:
     config.database = DatabaseConfig(
         path=_expand_path(str(database.get("path", config.database.path)))
     )
+
+    auth = resolved.get("auth", {})
+    raw_users = auth.get("users", [])
+    if not isinstance(raw_users, list):
+        raise ValueError("Configuration error: auth.users must be a list")
+    if len(raw_users) != 2:
+        raise ValueError("Configuration error: auth.users must define exactly 2 users")
+
+    users: list[UserConfig] = []
+    for index, raw_user in enumerate(raw_users, start=1):
+        if not isinstance(raw_user, dict):
+            raise ValueError(f"Configuration error: auth.users[{index}] must be an object")
+        username = str(raw_user.get("username", "")).strip()
+        password_hash = str(raw_user.get("password_hash", "")).strip()
+        db_path = _expand_path(str(raw_user.get("db_path", "")).strip())
+        if not username:
+            raise ValueError(f"Configuration error: auth.users[{index}].username is required")
+        if not password_hash:
+            raise ValueError(f"Configuration error: auth.users[{index}].password_hash is required")
+        if not db_path:
+            raise ValueError(f"Configuration error: auth.users[{index}].db_path is required")
+        users.append(UserConfig(username=username, password_hash=password_hash, db_path=db_path))
+    config.auth = AuthConfig(users=users)
 
     return config
 

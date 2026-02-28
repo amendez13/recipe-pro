@@ -4,3 +4,12 @@ web:
 
 database:
   path: "data/ideas.db"
+
+auth:
+  users:
+    - username: "user1"
+      password_hash: "$2b$12$REPLACE_WITH_BCRYPT_HASH_FOR_USER1"
+      db_path: "data/user1.db"
+    - username: "user2"
+      password_hash: "$2b$12$REPLACE_WITH_BCRYPT_HASH_FOR_USER2"
+      db_path: "data/user2.db"
