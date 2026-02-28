@@ -121,6 +121,20 @@ recipe_ingredients (junction table)
 - `POST /api/auth/logout` - Clears auth cookie
 - `GET /api/auth/me` - Returns current authenticated user
 
+### Authentication Implementation Notes
+- Passwords are stored as hashes (PBKDF2) in config; plaintext passwords are never persisted.
+- Session is a signed cookie token with expiry (`auth.session_max_age_seconds`) and username payload.
+- Cookie settings are controlled by config:
+  - `auth.session_cookie_name`
+  - `auth.session_secure`
+  - `HttpOnly` enabled
+  - `SameSite=Lax`
+- Backend resolves current user from session cookie on each request and routes to that user's DB instance.
+- Unauthenticated requests to protected data endpoints return `401 Authentication required`.
+- Frontend bootstraps auth state with `/api/auth/me`; unauthenticated users see login view.
+- Frontend globally handles `401` responses by returning to login state.
+- System requires exactly two configured users in `auth.users`.
+
 ## UI Views
 
 ### Home / Recipe List
