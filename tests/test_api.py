@@ -8,15 +8,8 @@ from app.config import AuthConfig, Config, DatabaseConfig, UserConfig, WebConfig
 
 @pytest.fixture
 def client(tmp_path):
-    cfg = Config(
-        web=WebConfig(host="127.0.0.1", port=8084),
-        database=DatabaseConfig(path=str(tmp_path / "api.db")),
-    )
-    return TestClient(create_app(cfg))
-
-
-@pytest.fixture
-def auth_client(tmp_path):
+    user1_hash = hash_password("alice-pass")
+    user2_hash = hash_password("bob-pass")
     cfg = Config(
         web=WebConfig(host="127.0.0.1", port=8084),
         database=DatabaseConfig(path=str(tmp_path / "api.db")),
@@ -25,12 +18,44 @@ def auth_client(tmp_path):
             users=[
                 UserConfig(
                     username="alice",
-                    password_hash=hash_password("alice-pass"),
+                    password_hash=user1_hash,
                     db_path=str(tmp_path / "alice.db"),
                 ),
                 UserConfig(
                     username="bob",
-                    password_hash=hash_password("bob-pass"),
+                    password_hash=user2_hash,
+                    db_path=str(tmp_path / "bob.db"),
+                ),
+            ],
+        ),
+    )
+    test_client = TestClient(create_app(cfg))
+    login = test_client.post(
+        "/api/auth/login",
+        json={"username": "alice", "password": "alice-pass", "remember": True},
+    )
+    assert login.status_code == 200
+    return test_client
+
+
+@pytest.fixture
+def auth_client(tmp_path):
+    user1_hash = hash_password("alice-pass")
+    user2_hash = hash_password("bob-pass")
+    cfg = Config(
+        web=WebConfig(host="127.0.0.1", port=8084),
+        database=DatabaseConfig(path=str(tmp_path / "api.db")),
+        auth=AuthConfig(
+            session_secret="test-session-secret",
+            users=[
+                UserConfig(
+                    username="alice",
+                    password_hash=user1_hash,
+                    db_path=str(tmp_path / "alice.db"),
+                ),
+                UserConfig(
+                    username="bob",
+                    password_hash=user2_hash,
                     db_path=str(tmp_path / "bob.db"),
                 ),
             ],

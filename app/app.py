@@ -465,10 +465,11 @@ def create_app(config: Config | None = None) -> FastAPI:
         cfg = load_config(get_default_config_path())
     app.state.config = cfg
 
-    db = RecipeDatabase(cfg.database.path)
-    app.state.db = db
+    user_map = {user.username: user for user in cfg.auth.users}
+    app.state.user_map = user_map
+    app.state.user_dbs = {}
 
-    logger.info("Starting Recipe Pro with database at %s", cfg.database.path)
+    logger.info("Starting Recipe Pro with %d configured users", len(user_map))
 
     app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
@@ -487,6 +488,23 @@ def create_app(config: Config | None = None) -> FastAPI:
             if user.username == username:
                 return user
         return None
+
+    def _require_user(request: Request):
+        user = _resolve_session_user(request)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        return user
+
+    def _db_for_user(username: str) -> RecipeDatabase:
+        existing = app.state.user_dbs.get(username)
+        if existing is not None:
+            return existing
+        user = app.state.user_map.get(username)
+        if user is None:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        db_instance = RecipeDatabase(user.db_path)
+        app.state.user_dbs[username] = db_instance
+        return db_instance
 
     @app.get("/")
     async def serve_index() -> FileResponse:
@@ -530,8 +548,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         return {"username": user.username}
 
     @app.get("/api/recipes")
-    async def list_recipes(search: Optional[str] = None) -> list[dict[str, Any]]:
-        recipes = app.state.db.get_all_recipes(search=search)
+    async def list_recipes(request: Request, search: Optional[str] = None) -> list[dict[str, Any]]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        recipes = db.get_all_recipes(search=search)
         return [
             {
                 "id": recipe.id,
@@ -545,42 +565,54 @@ def create_app(config: Config | None = None) -> FastAPI:
         ]
 
     @app.post("/api/recipes", status_code=201)
-    async def create_recipe(data: RecipePayload) -> dict[str, Any]:
-        created = app.state.db.create_recipe(data.model_dump())
+    async def create_recipe(request: Request, data: RecipePayload) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        created = db.create_recipe(data.model_dump())
         return created.to_dict()
 
     @app.get("/api/recipes/{recipe_id}")
-    async def get_recipe(recipe_id: int) -> dict[str, Any]:
-        recipe = app.state.db.get_recipe_by_id(recipe_id)
+    async def get_recipe(request: Request, recipe_id: int) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        recipe = db.get_recipe_by_id(recipe_id)
         if not recipe:
             raise HTTPException(status_code=404, detail="Recipe not found")
         return recipe.to_dict()
 
     @app.put("/api/recipes/{recipe_id}")
-    async def update_recipe(recipe_id: int, data: RecipePayload) -> dict[str, Any]:
-        updated = app.state.db.update_recipe(recipe_id, data.model_dump())
+    async def update_recipe(request: Request, recipe_id: int, data: RecipePayload) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        updated = db.update_recipe(recipe_id, data.model_dump())
         if not updated:
             raise HTTPException(status_code=404, detail="Recipe not found")
         return updated.to_dict()
 
     @app.delete("/api/recipes/{recipe_id}")
-    async def delete_recipe(recipe_id: int) -> dict[str, bool]:
-        deleted = app.state.db.delete_recipe(recipe_id)
+    async def delete_recipe(request: Request, recipe_id: int) -> dict[str, bool]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        deleted = db.delete_recipe(recipe_id)
         if not deleted:
             raise HTTPException(status_code=404, detail="Recipe not found")
         return {"success": True}
 
     @app.get("/api/ingredients")
-    async def list_ingredients() -> list[dict[str, Any]]:
-        ingredients = app.state.db.get_all_ingredients()
+    async def list_ingredients(request: Request) -> list[dict[str, Any]]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        ingredients = db.get_all_ingredients()
         return [ingredient.to_dict() for ingredient in ingredients]
 
     @app.get("/api/ingredients/{ingredient_id}/recipes")
-    async def recipes_by_ingredient(ingredient_id: int) -> list[dict[str, Any]]:
-        ingredient = app.state.db.get_ingredient_by_id(ingredient_id)
+    async def recipes_by_ingredient(request: Request, ingredient_id: int) -> list[dict[str, Any]]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        ingredient = db.get_ingredient_by_id(ingredient_id)
         if ingredient is None:
             raise HTTPException(status_code=404, detail="Ingredient not found")
-        recipes = app.state.db.get_recipes_by_ingredient(ingredient_id)
+        recipes = db.get_recipes_by_ingredient(ingredient_id)
         return [
             {
                 "id": recipe.id,
@@ -594,9 +626,11 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.patch("/api/ingredients/{ingredient_id}")
     async def update_ingredient_preference(
-        ingredient_id: int, data: IngredientPreferencePayload
+        request: Request, ingredient_id: int, data: IngredientPreferencePayload
     ) -> dict[str, Any]:
-        updated = app.state.db.update_ingredient_default_available(
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        updated = db.update_ingredient_default_available(
             ingredient_id=ingredient_id,
             default_available=data.default_available,
         )
@@ -606,9 +640,11 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.post("/api/ingredients/{ingredient_id}")
     async def update_ingredient_preference_post(
-        ingredient_id: int, data: IngredientPreferencePayload
+        request: Request, ingredient_id: int, data: IngredientPreferencePayload
     ) -> dict[str, Any]:
-        updated = app.state.db.update_ingredient_default_available(
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        updated = db.update_ingredient_default_available(
             ingredient_id=ingredient_id,
             default_available=data.default_available,
         )
@@ -618,9 +654,11 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.post("/api/ingredients/{ingredient_id}/default")
     async def update_ingredient_default(
-        ingredient_id: int, data: IngredientPreferencePayload
+        request: Request, ingredient_id: int, data: IngredientPreferencePayload
     ) -> dict[str, Any]:
-        updated = app.state.db.update_ingredient_default_available(
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        updated = db.update_ingredient_default_available(
             ingredient_id=ingredient_id,
             default_available=data.default_available,
         )
@@ -629,20 +667,27 @@ def create_app(config: Config | None = None) -> FastAPI:
         return updated.to_dict()
 
     @app.get("/api/stats")
-    async def get_stats() -> dict[str, Any]:
-        return app.state.db.get_stats()
+    async def get_stats(request: Request) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        return db.get_stats()
 
     @app.post("/api/shopping-list")
-    async def get_shopping_list(data: RecipeIdsPayload) -> dict[str, Any]:
-        return app.state.db.get_shopping_list(data.recipe_ids)
+    async def get_shopping_list(request: Request, data: RecipeIdsPayload) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        return db.get_shopping_list(data.recipe_ids)
 
     @app.post("/api/suggestions")
-    async def get_suggestions(data: SuggestionPayload) -> dict[str, Any]:
-        suggestions = app.state.db.get_recipe_suggestions(data.ingredient_ids)
+    async def get_suggestions(request: Request, data: SuggestionPayload) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        suggestions = db.get_recipe_suggestions(data.ingredient_ids)
         return {"suggestions": suggestions}
 
     @app.post("/api/recipes/import-preview")
-    async def get_recipe_import_preview(data: RecipeImportPayload) -> dict[str, Any]:
+    async def get_recipe_import_preview(request: Request, data: RecipeImportPayload) -> dict[str, Any]:
+        _require_user(request)
         if data.url:
             source_url = data.url.strip()
             parsed = urlparse(source_url)
