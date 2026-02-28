@@ -153,3 +153,35 @@ def test_suggestions_endpoint(client):
     data = response.json()
     assert "suggestions" in data
     assert len(data["suggestions"]) >= 1
+
+
+def test_recipe_import_preview_endpoint(client, monkeypatch):
+    class DummyResult:
+        stdout = """
+        {
+          "title": "Imported Recipe",
+          "source_url": "https://example.com/r",
+          "servings": 2,
+          "prep_time": 10,
+          "cook_time": 20,
+          "steps": ["Step one", "Step two"],
+          "ingredients": [
+            {"name": "Salt", "quantity": 1, "unit": "tsp", "category": "spices", "notes": ""}
+          ]
+        }
+        """
+
+    def fake_run(*args, **kwargs):
+        return DummyResult()
+
+    monkeypatch.setattr("app.app.subprocess.run", fake_run)
+
+    response = client.post(
+        "/api/recipes/import-preview",
+        json={"url": "https://example.com/recipe"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "Imported Recipe"
+    assert len(body["steps"]) == 2
+    assert len(body["ingredients"]) == 1

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import subprocess
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -60,6 +63,49 @@ class RecipeIdsPayload(BaseModel):
 
 class SuggestionPayload(BaseModel):
     ingredient_ids: list[int] = Field(default_factory=list)
+
+
+class RecipeImportPayload(BaseModel):
+    url: str = Field(min_length=1)
+
+
+def _extract_json_from_text(text: str) -> dict[str, Any]:
+    raw = text.strip()
+    if raw.startswith("```"):
+        lines = raw.splitlines()
+        if len(lines) >= 3:
+            raw = "\n".join(lines[1:-1]).strip()
+    return json.loads(raw)
+
+
+def _normalize_import_recipe(data: dict[str, Any]) -> dict[str, Any]:
+    steps = [str(step).strip() for step in data.get("steps", []) if str(step).strip()]
+    ingredients = []
+    for item in data.get("ingredients", []):
+        name = str(item.get("name", "")).strip()
+        unit = str(item.get("unit", "")).strip()
+        if not name or not unit:
+            continue
+        ingredients.append(
+            {
+                "name": name,
+                "quantity": float(item.get("quantity") or 0),
+                "unit": unit,
+                "category": str(item.get("category") or "").strip() or None,
+                "notes": str(item.get("notes") or "").strip() or None,
+            }
+        )
+
+    return {
+        "title": str(data.get("title", "")).strip(),
+        "steps": steps,
+        "instructions": "\n".join(steps),
+        "servings": data.get("servings"),
+        "prep_time": data.get("prep_time"),
+        "cook_time": data.get("cook_time"),
+        "ingredients": ingredients,
+        "source_url": str(data.get("source_url", "")).strip() or None,
+    }
 
 
 def create_app(config: Config | None = None) -> FastAPI:
@@ -196,6 +242,44 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def get_suggestions(data: SuggestionPayload) -> dict[str, Any]:
         suggestions = app.state.db.get_recipe_suggestions(data.ingredient_ids)
         return {"suggestions": suggestions}
+
+    @app.post("/api/recipes/import-preview")
+    async def get_recipe_import_preview(data: RecipeImportPayload) -> dict[str, Any]:
+        parsed = urlparse(data.url.strip())
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            raise HTTPException(status_code=400, detail="Invalid URL")
+
+        prompt = (
+            "Extract the recipe from this URL and return only valid JSON with keys: "
+            "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
+            "ingredients (array of objects with name, quantity, unit, category, notes). "
+            f"URL: {data.url.strip()}"
+        )
+        try:
+            result = subprocess.run(
+                ["claude", "-p", prompt],
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=120,
+            )
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=500, detail="claude CLI not found on server") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(status_code=504, detail="Recipe import timed out") from exc
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or "").strip()
+            raise HTTPException(status_code=502, detail=f"Recipe import failed: {stderr or 'claude CLI error'}") from exc
+
+        try:
+            parsed_json = _extract_json_from_text(result.stdout)
+            normalized = _normalize_import_recipe(parsed_json)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            raise HTTPException(status_code=502, detail="Recipe import returned invalid JSON") from exc
+
+        if not normalized["title"] or not normalized["steps"] or not normalized["ingredients"]:
+            raise HTTPException(status_code=422, detail="Imported recipe is incomplete")
+        return normalized
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:

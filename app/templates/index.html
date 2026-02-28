@@ -71,6 +71,18 @@
     <template id="form-view-template">
         <section class="panel">
             <h2 id="form-title">Add Recipe</h2>
+            <section id="import-assistant" class="import-assistant">
+                <h3>Import From Link</h3>
+                <div class="row gap responsive">
+                    <input id="import-url" type="url" placeholder="Paste recipe URL...">
+                    <button type="button" id="import-preview-btn">Preview Import</button>
+                </div>
+                <div id="import-message" class="message"></div>
+                <div id="import-preview" class="import-preview hidden"></div>
+                <div class="row gap">
+                    <button type="button" id="import-confirm-btn" class="hidden">Confirm and Add Recipe</button>
+                </div>
+            </section>
             <form id="recipe-form" class="stack">
                 <label>Title<input id="f-title" required></label>
                 <div class="row between gap align-center">

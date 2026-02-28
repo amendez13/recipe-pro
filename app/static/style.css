@@ -298,6 +298,25 @@ label {
     color: var(--danger);
 }
 
+.import-assistant {
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 0.75rem;
+    background: #fbfdfb;
+}
+
+.import-preview {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    padding: 0.65rem;
+    background: #fff;
+}
+
+.import-preview h4 {
+    margin: 0 0 0.35rem;
+    color: var(--heading);
+}
+
 .hidden {
     display: none;
 }
