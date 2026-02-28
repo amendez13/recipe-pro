@@ -4,6 +4,7 @@ from app.database import RecipeDatabase
 def recipe_payload(title: str = "Pasta") -> dict:
     return {
         "title": title,
+        "url": "https://example.com/pasta",
         "steps": ["Boil water", "Cook pasta"],
         "servings": 2,
         "prep_time": 10,
@@ -40,12 +41,14 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
     loaded = db.get_recipe_by_id(created.id)
     assert loaded is not None
     assert loaded.title == "Pasta"
+    assert loaded.url == "https://example.com/pasta"
     assert {i.ingredient.name for i in loaded.ingredients if i.ingredient} == {"pasta", "salt"}
 
     updated = db.update_recipe(
         created.id,
         {
             "title": "Better Pasta",
+            "url": "https://example.com/better-pasta",
             "steps": ["Step 1"],
             "servings": 3,
             "prep_time": 12,
@@ -58,6 +61,7 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
     )
     assert updated is not None
     assert updated.title == "Better Pasta"
+    assert updated.url == "https://example.com/better-pasta"
     assert [step.instruction for step in updated.steps] == ["Step 1"]
     assert {i.ingredient.name for i in updated.ingredients if i.ingredient} == {"pasta", "garlic"}
 

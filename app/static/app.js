@@ -317,6 +317,7 @@ async function renderDetailView(recipeId) {
     const titleEl = document.getElementById('detail-title');
     const ingredientsEl = document.getElementById('detail-ingredients');
     const stepsEl = document.getElementById('detail-steps');
+    const sourceUrlEl = document.getElementById('detail-source-url');
     const focusPanelEl = document.getElementById('focus-mode-panel');
     const focusCounterEl = document.getElementById('focus-step-counter');
     const focusTextEl = document.getElementById('focus-step-text');
@@ -342,6 +343,14 @@ async function renderDetailView(recipeId) {
             li.innerHTML = `<strong>Step ${index + 1}</strong><p>${escapeHtml(step)}</p>`;
             stepsEl.appendChild(li);
         });
+
+        if (recipe.url) {
+            sourceUrlEl.innerHTML = `Source: <a href="${escapeHtml(recipe.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(recipe.url)}</a>`;
+            sourceUrlEl.classList.remove('hidden');
+        } else {
+            sourceUrlEl.textContent = '';
+            sourceUrlEl.classList.add('hidden');
+        }
 
         function renderFocusStep() {
             if (!steps.length) {
@@ -482,6 +491,7 @@ function collectFormPayload() {
 
     return {
         title: document.getElementById('f-title').value.trim(),
+        url: document.getElementById('f-url').value.trim() || null,
         instructions: steps.join('\n'),
         steps,
         servings: Number(document.getElementById('f-servings').value) || null,
@@ -582,7 +592,17 @@ async function renderFormView(recipeId = null) {
             return;
         }
         try {
-            const created = await api.createRecipe(importPayload);
+            const importCreatePayload = {
+                title: importPayload.title,
+                url: importPayload.source_url || null,
+                instructions: (importPayload.steps || []).join('\n'),
+                steps: importPayload.steps || [],
+                servings: importPayload.servings ?? null,
+                prep_time: importPayload.prep_time ?? null,
+                cook_time: importPayload.cook_time ?? null,
+                ingredients: importPayload.ingredients || [],
+            };
+            const created = await api.createRecipe(importCreatePayload);
             setMessage(importMessageEl, `Imported and created ${created.title}.`);
             importPayload = null;
             setTimeout(() => nav('list'), 300);
@@ -598,6 +618,7 @@ async function renderFormView(recipeId = null) {
             const recipe = await api.getRecipe(recipeId);
             const steps = getRecipeSteps(recipe);
             document.getElementById('f-title').value = recipe.title;
+            document.getElementById('f-url').value = recipe.url || '';
             document.getElementById('f-servings').value = recipe.servings ?? '';
             document.getElementById('f-prep').value = recipe.prep_time ?? '';
             document.getElementById('f-cook').value = recipe.cook_time ?? '';

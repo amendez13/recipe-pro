@@ -81,6 +81,7 @@
                         <button id="toggle-focus-mode" type="button">Focus Mode</button>
                     </div>
                     <ol id="detail-steps" class="step-list"></ol>
+                    <p id="detail-source-url" class="detail-source-url hidden"></p>
                 </article>
             </div>
             <div class="row gap">
@@ -139,6 +140,7 @@
                     </div>
                     <form id="recipe-form" class="stack">
                         <label>Title<input id="f-title" required></label>
+                        <label>Recipe URL (optional)<input id="f-url" type="url" placeholder="https://example.com/recipe"></label>
                         <div class="row between gap align-center">
                             <h3>Steps</h3>
                             <button type="button" id="add-step-row">Add Step</button>

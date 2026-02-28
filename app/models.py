@@ -106,6 +106,7 @@ class Recipe:
     id: Optional[int] = None
     title: str = ""
     instructions: str = ""
+    url: Optional[str] = None
     servings: Optional[int] = None
     prep_time: Optional[int] = None
     cook_time: Optional[int] = None
@@ -122,6 +123,7 @@ class Recipe:
             id=row.get("id"),
             title=row.get("title", ""),
             instructions=row.get("instructions", ""),
+            url=row.get("url"),
             servings=row.get("servings"),
             prep_time=row.get("prep_time"),
             cook_time=row.get("cook_time"),
@@ -134,6 +136,7 @@ class Recipe:
             "id": self.id,
             "title": self.title,
             "instructions": self.instructions,
+            "url": self.url,
             "servings": self.servings,
             "prep_time": self.prep_time,
             "cook_time": self.cook_time,

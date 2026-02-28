@@ -72,6 +72,7 @@ class IngredientPreferencePayload(BaseModel):
 class RecipePayload(BaseModel):
     title: str = Field(min_length=1)
     instructions: str = ""
+    url: Optional[str] = None
     steps: list[str] = Field(default_factory=list)
     servings: Optional[int] = Field(default=None, ge=1)
     prep_time: Optional[int] = Field(default=None, ge=0)
@@ -556,6 +557,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             {
                 "id": recipe.id,
                 "title": recipe.title,
+                "url": recipe.url,
                 "servings": recipe.servings,
                 "prep_time": recipe.prep_time,
                 "cook_time": recipe.cook_time,

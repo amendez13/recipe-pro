@@ -57,6 +57,7 @@ class RecipeDatabase:
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     instructions TEXT NOT NULL,
+                    url TEXT,
                     servings INTEGER,
                     prep_time INTEGER,
                     cook_time INTEGER,
@@ -65,6 +66,11 @@ class RecipeDatabase:
                 )
                 """
             )
+            recipe_columns = {
+                row["name"] for row in conn.execute("PRAGMA table_info(recipes)").fetchall()
+            }
+            if "url" not in recipe_columns:
+                conn.execute("ALTER TABLE recipes ADD COLUMN url TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS recipe_ingredients (
@@ -218,7 +224,7 @@ class RecipeDatabase:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT r.id, r.title, r.instructions, r.servings, r.prep_time, r.cook_time,
+                SELECT r.id, r.title, r.instructions, r.url, r.servings, r.prep_time, r.cook_time,
                        r.created_at, r.updated_at
                 FROM recipes r
                 INNER JOIN recipe_ingredients ri ON ri.recipe_id = r.id
@@ -238,12 +244,13 @@ class RecipeDatabase:
         with self._connect() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO recipes (title, instructions, servings, prep_time, cook_time, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO recipes (title, instructions, url, servings, prep_time, cook_time, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     recipe_data.get("title", ""),
                     instructions_text,
+                    recipe_data.get("url"),
                     recipe_data.get("servings"),
                     recipe_data.get("prep_time"),
                     recipe_data.get("cook_time"),
@@ -291,7 +298,7 @@ class RecipeDatabase:
 
     def get_all_recipes(self, search: Optional[str] = None) -> list[Recipe]:
         query = (
-            "SELECT id, title, instructions, servings, prep_time, cook_time, created_at, updated_at "
+            "SELECT id, title, instructions, url, servings, prep_time, cook_time, created_at, updated_at "
             "FROM recipes"
         )
         params: tuple[Any, ...] = ()
@@ -347,7 +354,7 @@ class RecipeDatabase:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, title, instructions, servings, prep_time, cook_time, created_at, updated_at
+                SELECT id, title, instructions, url, servings, prep_time, cook_time, created_at, updated_at
                 FROM recipes
                 WHERE id = ?
                 """,
@@ -381,12 +388,13 @@ class RecipeDatabase:
             conn.execute(
                 """
                 UPDATE recipes
-                SET title = ?, instructions = ?, servings = ?, prep_time = ?, cook_time = ?, updated_at = ?
+                SET title = ?, instructions = ?, url = ?, servings = ?, prep_time = ?, cook_time = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     recipe_data.get("title", ""),
                     instructions_text,
+                    recipe_data.get("url"),
                     recipe_data.get("servings"),
                     recipe_data.get("prep_time"),
                     recipe_data.get("cook_time"),

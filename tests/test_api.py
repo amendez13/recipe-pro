@@ -67,6 +67,7 @@ def auth_client(tmp_path):
 def create_recipe(client: TestClient, title: str = "Pasta") -> dict:
     payload = {
         "title": title,
+        "url": "https://example.com/pasta",
         "steps": ["Step 1", "Step 2"],
         "servings": 2,
         "prep_time": 10,
@@ -184,11 +185,13 @@ def test_recipe_crud_and_search(client):
 
     detail_resp = client.get(f"/api/recipes/{created['id']}")
     assert detail_resp.status_code == 200
+    assert detail_resp.json()["url"] == "https://example.com/pasta"
     assert len(detail_resp.json()["ingredients"]) == 2
     assert detail_resp.json()["steps"] == ["Step 1", "Step 2"]
 
     update_payload = {
         "title": "Pasta Deluxe",
+        "url": "https://example.com/pasta-deluxe",
         "steps": ["Step 1 revised"],
         "servings": 4,
         "prep_time": 12,
@@ -198,6 +201,7 @@ def test_recipe_crud_and_search(client):
     update_resp = client.put(f"/api/recipes/{created['id']}", json=update_payload)
     assert update_resp.status_code == 200
     assert update_resp.json()["title"] == "Pasta Deluxe"
+    assert update_resp.json()["url"] == "https://example.com/pasta-deluxe"
     assert update_resp.json()["steps"] == ["Step 1 revised"]
 
     delete_resp = client.delete(f"/api/recipes/{created['id']}")
