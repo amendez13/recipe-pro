@@ -93,6 +93,13 @@ PY
 - `POST /api/auth/logout`
 - `GET /api/auth/me`
 
+## Ingredient Data Model
+
+- Ingredients are independent records (`name`, optional `category`).
+- `quantity`, `unit`, and `notes` are recipe-specific values stored on the recipe-ingredient link.
+- The same ingredient can therefore have different quantities/units/notes in different recipes.
+- Current rule: one ingredient can appear only once per recipe (`UNIQUE(recipe_id, ingredient_id)`).
+
 ## Test
 
 ```bash

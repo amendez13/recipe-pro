@@ -36,6 +36,14 @@
 - `notes TEXT NULL`
 - `UNIQUE(recipe_id, ingredient_id)`
 
+## Ingredient Semantics
+
+- `ingredients` are independent entities (name/category/default flags).
+- `ingredients` do **not** own `quantity`, `unit`, or `notes`.
+- `quantity`, `unit`, and `notes` are attributes of the **recipe-to-ingredient link** in `recipe_ingredients`.
+- This means the same ingredient can have different quantities/units/notes across different recipes.
+- Current constraint: `UNIQUE(recipe_id, ingredient_id)` allows only one row per ingredient per recipe.
+
 ## API Boundaries
 
 - Recipe CRUD endpoints handle full recipe payloads including ingredients.
