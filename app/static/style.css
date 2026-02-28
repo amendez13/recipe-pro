@@ -298,11 +298,66 @@ label {
     color: var(--danger);
 }
 
+.entry-flow {
+    display: grid;
+    gap: 0.95rem;
+}
+
+.entry-block {
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    padding: 0.95rem;
+    background: #fff;
+    box-shadow: 0 10px 20px rgba(28, 37, 32, 0.06);
+}
+
+.entry-block-head {
+    margin-bottom: 0.6rem;
+}
+
+.entry-block-head h3 {
+    margin: 0;
+}
+
+.entry-block-head p {
+    margin: 0.18rem 0 0;
+}
+
+.manual-entry {
+    background: linear-gradient(180deg, #ffffff 0%, #fbfcfa 100%);
+}
+
+.entry-divider {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+    color: var(--text-soft);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+
+.entry-divider::before,
+.entry-divider::after {
+    content: "";
+    height: 1px;
+    flex: 1;
+    background: var(--line);
+}
+
+.entry-divider span {
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: #fff;
+    padding: 0.18rem 0.58rem;
+}
+
 .import-assistant {
     border: 1px solid var(--line);
-    border-radius: 14px;
-    padding: 0.75rem;
-    background: #fbfdfb;
+    border-radius: 18px;
+    padding: 0.95rem;
+    background: linear-gradient(180deg, #f8fbf8 0%, #ffffff 100%);
 }
 
 .import-preview {

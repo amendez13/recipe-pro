@@ -71,43 +71,57 @@
     <template id="form-view-template">
         <section class="panel">
             <h2 id="form-title">Add Recipe</h2>
-            <section id="import-assistant" class="import-assistant">
-                <h3>Import From Link</h3>
-                <div class="row gap responsive">
-                    <input id="import-url" type="url" placeholder="Paste recipe URL...">
-                    <button type="button" id="import-preview-btn">Preview Import</button>
-                </div>
-                <div id="import-message" class="message"></div>
-                <div id="import-preview" class="import-preview hidden"></div>
-                <div class="row gap">
-                    <button type="button" id="import-confirm-btn" class="hidden">Confirm and Add Recipe</button>
-                </div>
-            </section>
-            <form id="recipe-form" class="stack">
-                <label>Title<input id="f-title" required></label>
-                <div class="row between gap align-center">
-                    <h3>Steps</h3>
-                    <button type="button" id="add-step-row">Add Step</button>
-                </div>
-                <div id="step-rows" class="stack"></div>
-                <div class="row gap responsive">
-                    <label>Servings<input id="f-servings" type="number" min="1"></label>
-                    <label>Prep Time (min)<input id="f-prep" type="number" min="0"></label>
-                    <label>Cook Time (min)<input id="f-cook" type="number" min="0"></label>
-                </div>
+            <div class="entry-flow">
+                <section id="import-assistant" class="entry-block import-assistant">
+                    <div class="entry-block-head">
+                        <h3>Import From Link</h3>
+                        <p class="muted">Paste a recipe URL, preview, then confirm before adding.</p>
+                    </div>
+                    <div class="row gap responsive">
+                        <input id="import-url" type="url" placeholder="Paste recipe URL...">
+                        <button type="button" id="import-preview-btn">Preview Import</button>
+                    </div>
+                    <div id="import-message" class="message"></div>
+                    <div id="import-preview" class="import-preview hidden"></div>
+                    <div class="row gap">
+                        <button type="button" id="import-confirm-btn" class="hidden">Confirm and Add Recipe</button>
+                    </div>
+                </section>
 
-                <div class="row between gap">
-                    <h3>Ingredients</h3>
-                    <button type="button" id="add-ingredient-row">Add Ingredient</button>
-                </div>
-                <div id="ingredient-rows" class="stack"></div>
+                <div class="entry-divider" aria-hidden="true"><span>or</span></div>
 
-                <div class="row gap">
-                    <button type="submit">Save</button>
-                    <button type="button" id="cancel-form">Cancel</button>
-                </div>
-                <div id="form-message" class="message"></div>
-            </form>
+                <section class="entry-block manual-entry">
+                    <div class="entry-block-head">
+                        <h3>Manual Entry</h3>
+                        <p class="muted">Type each field yourself and save when ready.</p>
+                    </div>
+                    <form id="recipe-form" class="stack">
+                        <label>Title<input id="f-title" required></label>
+                        <div class="row between gap align-center">
+                            <h3>Steps</h3>
+                            <button type="button" id="add-step-row">Add Step</button>
+                        </div>
+                        <div id="step-rows" class="stack"></div>
+                        <div class="row gap responsive">
+                            <label>Servings<input id="f-servings" type="number" min="1"></label>
+                            <label>Prep Time (min)<input id="f-prep" type="number" min="0"></label>
+                            <label>Cook Time (min)<input id="f-cook" type="number" min="0"></label>
+                        </div>
+
+                        <div class="row between gap">
+                            <h3>Ingredients</h3>
+                            <button type="button" id="add-ingredient-row">Add Ingredient</button>
+                        </div>
+                        <div id="ingredient-rows" class="stack"></div>
+
+                        <div class="row gap">
+                            <button type="submit">Save</button>
+                            <button type="button" id="cancel-form">Cancel</button>
+                        </div>
+                        <div id="form-message" class="message"></div>
+                    </form>
+                </section>
+            </div>
         </section>
     </template>
 
