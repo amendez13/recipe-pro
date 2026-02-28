@@ -45,10 +45,10 @@ auth:
   users:
     - username: "user1"
       password_hash: "pbkdf2_sha256$<iterations>$<salt>$<hash>"
-      db_path: "/home/admin/projects/idea-canvas/data/user1.db"
+      db_path: "/home/admin/projects/recipe-pro/data/user1.db"
     - username: "user2"
       password_hash: "pbkdf2_sha256$<iterations>$<salt>$<hash>"
-      db_path: "/home/admin/projects/idea-canvas/data/user2.db"
+      db_path: "/home/admin/projects/recipe-pro/data/user2.db"
 ```
 
 ### Generate Password Hashes
@@ -117,12 +117,12 @@ pytest -q
 
 Systemd (same VPS, Tailscale network):
 
-- unit template: `ansible/templates/idea-canvas.service`
+- unit template: `ansible/templates/recipe-pro.service`
 - restart service:
 
 ```bash
-sudo systemctl restart idea-canvas
-sudo systemctl status idea-canvas --no-pager
+sudo systemctl restart recipe-pro
+sudo systemctl status recipe-pro --no-pager
 ```
 
 Multi-user rollout checklist:

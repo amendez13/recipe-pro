@@ -1,4 +1,4 @@
-"""Configuration management for Idea Canvas."""
+"""Configuration management for Recipe Pro."""
 
 from __future__ import annotations
 
@@ -137,7 +137,7 @@ def get_default_config_path() -> Path:
     candidates = [
         Path("config/config.local.yaml"),
         Path("config/config.yaml"),
-        Path.home() / ".config" / "idea-canvas" / "config.yaml",
+        Path.home() / ".config" / "recipe-pro" / "config.yaml",
     ]
     for path in candidates:
         if path.exists():

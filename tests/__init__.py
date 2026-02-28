@@ -1,1 +1,1 @@
-"""Tests for Idea Canvas."""
+"""Tests for Recipe Pro."""

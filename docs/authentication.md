@@ -59,10 +59,10 @@ auth:
   users:
     - username: "alex"
       password_hash: "pbkdf2_sha256$<iterations>$<salt>$<hash>"
-      db_path: "/home/admin/projects/idea-canvas/data/alex.db"
+      db_path: "/home/admin/projects/recipe-pro/data/alex.db"
     - username: "kris"
       password_hash: "pbkdf2_sha256$<iterations>$<salt>$<hash>"
-      db_path: "/home/admin/projects/idea-canvas/data/kris.db"
+      db_path: "/home/admin/projects/recipe-pro/data/kris.db"
 ```
 
 ## Usage
@@ -80,7 +80,7 @@ PY
 3. Restart service:
 
 ```bash
-sudo systemctl restart idea-canvas.service
+sudo systemctl restart recipe-pro.service
 ```
 
 4. Log in from UI or via API:

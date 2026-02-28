@@ -1,8 +1,8 @@
-service_name: idea-canvas
+service_name: recipe-pro
 
 app_user: admin
 app_group: admin
-app_dir: /home/admin/projects/idea-canvas
+app_dir: /home/admin/projects/recipe-pro
 
 app_host: 0.0.0.0
 app_port: 8084

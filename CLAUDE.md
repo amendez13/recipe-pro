@@ -13,7 +13,7 @@ See **[AGENT.md](AGENT.md)** for the complete project specification including:
 ### Running Locally
 
 ```bash
-cd /home/admin/projects/idea-canvas
+cd /home/admin/projects/recipe-pro
 source .venv/bin/activate
 python -m app.main -c config/config.local.yaml -v
 ```
@@ -27,7 +27,7 @@ PYTHONPATH=. pytest tests/ -v
 ### Project Structure
 
 ```
-idea-canvas/  (Recipe Pro)
+recipe-pro/  (Recipe Pro)
 ├── app/
 │   ├── __init__.py
 │   ├── main.py          # CLI entry point
@@ -55,9 +55,9 @@ idea-canvas/  (Recipe Pro)
 
 ## Deployment
 
-Service: `idea-canvas.service` (port 8084, Tailscale-only)
+Service: `recipe-pro.service` (port 8084, Tailscale-only)
 
 ```bash
 cd /path/to/automation/infra/hetzner
-ansible-playbook -i inventory.local.ini idea_canvas_setup.yml
+ansible-playbook -i inventory.local.ini recipe_pro_setup.yml
 ```

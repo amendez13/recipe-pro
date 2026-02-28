@@ -6,18 +6,18 @@ The service is multi-user and expects two configured users with isolated databas
 
 ## Service
 
-Systemd unit template: `ansible/templates/idea-canvas.service`
+Systemd unit template: `ansible/templates/recipe-pro.service`
 
 Key settings:
 
-- Working directory: `/home/admin/projects/idea-canvas`
-- Start command: `/home/admin/projects/idea-canvas/.venv/bin/uvicorn app.app:app --host 100.84.173.75 --port 8084`
+- Working directory: `/home/admin/projects/recipe-pro`
+- Start command: `/home/admin/projects/recipe-pro/.venv/bin/uvicorn app.app:app --host 100.84.173.75 --port 8084`
 
 ## Restart and Verify
 
 ```bash
-sudo systemctl restart idea-canvas
-sudo systemctl is-active idea-canvas
+sudo systemctl restart recipe-pro
+sudo systemctl is-active recipe-pro
 curl -sSf http://100.84.173.75:8084/health
 ```
 

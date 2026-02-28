@@ -30,7 +30,7 @@
 
     - name: Install systemd unit file
       ansible.builtin.template:
-        src: templates/idea-canvas.service
+        src: templates/recipe-pro.service
         dest: "/etc/systemd/system/{{ service_name }}.service"
         owner: root
         group: root
