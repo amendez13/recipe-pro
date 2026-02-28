@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
+from html import unescape
 from pathlib import Path
 from typing import Any, Optional
+from urllib.error import URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import FileResponse
@@ -69,13 +73,252 @@ class RecipeImportPayload(BaseModel):
     url: str = Field(min_length=1)
 
 
+def _parse_fractional_number(value: str) -> Optional[float]:
+    token = value.strip()
+    if not token:
+        return None
+    if " " in token:
+        parts = token.split()
+        if len(parts) == 2 and "/" in parts[1]:
+            whole = float(parts[0])
+            num, den = parts[1].split("/", 1)
+            return whole + (float(num) / float(den))
+    if "/" in token:
+        num, den = token.split("/", 1)
+        return float(num) / float(den)
+    return float(token)
+
+
+def _parse_duration_minutes(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    raw = str(value).strip().upper()
+    if not raw:
+        return None
+    if raw.isdigit():
+        return int(raw)
+    match = re.fullmatch(r"P(?:\d+D)?(?:T(?:(\d+)H)?(?:(\d+)M)?)?", raw)
+    if not match:
+        return None
+    hours = int(match.group(1) or 0)
+    minutes = int(match.group(2) or 0)
+    total = (hours * 60) + minutes
+    return total if total > 0 else None
+
+
+def _extract_first_int(value: Any) -> Optional[int]:
+    if value is None:
+        return None
+    match = re.search(r"\d+", str(value))
+    return int(match.group(0)) if match else None
+
+
+def _extract_steps(recipe_node: dict[str, Any]) -> list[str]:
+    raw = recipe_node.get("recipeInstructions") or recipe_node.get("instructions")
+    if raw is None:
+        return []
+
+    def _normalize_step(step: Any) -> Optional[str]:
+        if isinstance(step, str):
+            text = step.strip()
+            return text or None
+        if isinstance(step, dict):
+            text = str(step.get("text") or step.get("name") or "").strip()
+            return text or None
+        return None
+
+    steps: list[str] = []
+    if isinstance(raw, list):
+        for item in raw:
+            if isinstance(item, dict) and "itemListElement" in item:
+                nested = item.get("itemListElement") or []
+                if isinstance(nested, list):
+                    for nested_item in nested:
+                        normalized = _normalize_step(nested_item)
+                        if normalized:
+                            steps.append(normalized)
+                continue
+            normalized = _normalize_step(item)
+            if normalized:
+                steps.append(normalized)
+    else:
+        normalized = _normalize_step(raw)
+        if normalized:
+            split_steps = [s.strip() for s in re.split(r"\n+|\r+|\.\s+(?=[A-Z])", normalized) if s.strip()]
+            steps.extend(split_steps if len(split_steps) > 1 else [normalized])
+    return steps
+
+
+def _parse_ingredient_line(text: str) -> dict[str, Any]:
+    cleaned = re.sub(r"\s+", " ", text).strip()
+    if not cleaned:
+        return {}
+
+    pattern = re.compile(
+        r"^(?:(?P<qty>\d+(?:\.\d+)?(?:/\d+)?(?:\s+\d+/\d+)?)\s+)?(?:(?P<unit>[A-Za-z]+)\s+)?(?P<name>.+)$"
+    )
+    match = pattern.match(cleaned)
+    if not match:
+        return {"name": cleaned, "quantity": 1.0, "unit": "item", "category": None, "notes": None}
+
+    qty_token = match.group("qty") or "1"
+    unit_token = (match.group("unit") or "").strip().lower()
+    name_token = (match.group("name") or "").strip(" ,.;:")
+
+    try:
+        quantity = _parse_fractional_number(qty_token) or 1.0
+    except ValueError:
+        quantity = 1.0
+    if quantity < 0:
+        quantity = 1.0
+    unit = unit_token or "item"
+    return {"name": name_token or cleaned, "quantity": quantity, "unit": unit, "category": None, "notes": None}
+
+
+def _find_recipe_node(candidate: Any) -> Optional[dict[str, Any]]:
+    if isinstance(candidate, dict):
+        type_value = candidate.get("@type")
+        if isinstance(type_value, list):
+            type_names = {str(item).lower() for item in type_value}
+        else:
+            type_names = {str(type_value).lower()} if type_value else set()
+        if "recipe" in type_names and candidate.get("name"):
+            return candidate
+        if "@graph" in candidate:
+            graph = candidate.get("@graph")
+            if isinstance(graph, list):
+                for item in graph:
+                    found = _find_recipe_node(item)
+                    if found:
+                        return found
+        for value in candidate.values():
+            found = _find_recipe_node(value)
+            if found:
+                return found
+    elif isinstance(candidate, list):
+        for item in candidate:
+            found = _find_recipe_node(item)
+            if found:
+                return found
+    return None
+
+
+def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
+    request = Request(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; RecipePro/1.0; +https://example.local)",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    try:
+        with urlopen(request, timeout=25) as response:
+            body = response.read().decode("utf-8", errors="ignore")
+    except (URLError, TimeoutError, ValueError):
+        return None
+
+    json_ld_blocks = re.findall(
+        r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
+        body,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    for block in json_ld_blocks:
+        raw = unescape(block).strip()
+        if not raw:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+
+        recipe_node = _find_recipe_node(payload)
+        if not recipe_node:
+            continue
+
+        title = str(recipe_node.get("name") or "").strip()
+        ingredients_raw = recipe_node.get("recipeIngredient") or recipe_node.get("ingredients") or []
+        if isinstance(ingredients_raw, str):
+            ingredients_raw = [ingredients_raw]
+        ingredients = []
+        for entry in ingredients_raw:
+            if isinstance(entry, str):
+                parsed_line = _parse_ingredient_line(entry)
+                if parsed_line.get("name"):
+                    ingredients.append(parsed_line)
+            elif isinstance(entry, dict):
+                parsed_line = _parse_ingredient_line(str(entry.get("text") or entry.get("name") or ""))
+                if parsed_line.get("name"):
+                    ingredients.append(parsed_line)
+
+        steps = _extract_steps(recipe_node)
+        if not title or not steps or not ingredients:
+            continue
+
+        return {
+            "title": title,
+            "steps": steps,
+            "instructions": "\n".join(steps),
+            "servings": _extract_first_int(recipe_node.get("recipeYield")),
+            "prep_time": _parse_duration_minutes(recipe_node.get("prepTime")),
+            "cook_time": _parse_duration_minutes(recipe_node.get("cookTime")),
+            "ingredients": ingredients,
+            "source_url": url,
+        }
+
+    return None
+
+
 def _extract_json_from_text(text: str) -> dict[str, Any]:
     raw = text.strip()
-    if raw.startswith("```"):
-        lines = raw.splitlines()
-        if len(lines) >= 3:
-            raw = "\n".join(lines[1:-1]).strip()
-    return json.loads(raw)
+    if not raw:
+        raise ValueError("Empty import response")
+
+    # Fast-path for already clean JSON output.
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, dict):
+            return parsed
+    except json.JSONDecodeError:
+        pass
+
+    # Common case: fenced JSON block.
+    fence_match = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, flags=re.IGNORECASE | re.DOTALL)
+    if fence_match:
+        parsed = json.loads(fence_match.group(1))
+        if isinstance(parsed, dict):
+            return parsed
+
+    # Fallback: find the first balanced {...} object in mixed prose.
+    start = raw.find("{")
+    while start != -1:
+        depth = 0
+        in_string = False
+        escaped = False
+        for idx in range(start, len(raw)):
+            char = raw[idx]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    candidate = raw[start : idx + 1]
+                    parsed = json.loads(candidate)
+                    if isinstance(parsed, dict):
+                        return parsed
+                    break
+        start = raw.find("{", start + 1)
+
+    raise ValueError("No JSON object found in import response")
 
 
 def _normalize_import_recipe(data: dict[str, Any]) -> dict[str, Any]:
@@ -249,6 +492,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             raise HTTPException(status_code=400, detail="Invalid URL")
 
+        extracted = _extract_recipe_from_url(data.url.strip())
+        if extracted:
+            return extracted
+
         prompt = (
             "Extract the recipe from this URL and return only valid JSON with keys: "
             "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
@@ -257,7 +504,7 @@ def create_app(config: Config | None = None) -> FastAPI:
         )
         try:
             result = subprocess.run(
-                ["claude", "-p", prompt],
+                ["claude", "-p", prompt, "--allowedTools", "WebFetch"],
                 capture_output=True,
                 text=True,
                 check=True,
@@ -273,7 +520,13 @@ def create_app(config: Config | None = None) -> FastAPI:
 
         try:
             parsed_json = _extract_json_from_text(result.stdout)
+            if parsed_json.get("subtype") == "error_during_execution":
+                errors = parsed_json.get("errors") or []
+                error_message = str(errors[0]).strip() if errors else "Recipe import failed during execution"
+                raise HTTPException(status_code=502, detail=error_message)
             normalized = _normalize_import_recipe(parsed_json)
+        except HTTPException:
+            raise
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             raise HTTPException(status_code=502, detail="Recipe import returned invalid JSON") from exc
 

@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 import pytest
 
-from app.app import create_app
+from app.app import _extract_recipe_from_url, create_app
 from app.config import Config, DatabaseConfig, WebConfig
 
 
@@ -185,3 +185,77 @@ def test_recipe_import_preview_endpoint(client, monkeypatch):
     assert body["title"] == "Imported Recipe"
     assert len(body["steps"]) == 2
     assert len(body["ingredients"]) == 1
+
+
+def test_recipe_import_preview_parses_fenced_json(client, monkeypatch):
+    class DummyResult:
+        stdout = """
+        Here is the extracted recipe:
+        ```json
+        {
+          "title": "Fenced Recipe",
+          "servings": 4,
+          "prep_time": 15,
+          "cook_time": 45,
+          "steps": ["Prep", "Bake"],
+          "ingredients": [
+            {"name": "Noodles", "quantity": 12, "unit": "oz", "category": "pantry", "notes": ""}
+          ]
+        }
+        ```
+        """
+
+    def fake_run(*args, **kwargs):
+        return DummyResult()
+
+    monkeypatch.setattr("app.app.subprocess.run", fake_run)
+
+    response = client.post("/api/recipes/import-preview", json={"url": "https://example.com/fenced"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "Fenced Recipe"
+    assert body["steps"] == ["Prep", "Bake"]
+    assert len(body["ingredients"]) == 1
+
+
+def test_extract_recipe_from_url_json_ld(monkeypatch):
+    class DummyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"""
+            <html><head>
+            <script type="application/ld+json">
+            {
+              "@context": "https://schema.org",
+              "@type": "Recipe",
+              "name": "Test Lasagna",
+              "recipeYield": "8 servings",
+              "prepTime": "PT20M",
+              "cookTime": "PT1H",
+              "recipeIngredient": ["1 lb beef", "2 cups cheese"],
+              "recipeInstructions": [
+                {"@type":"HowToStep","text":"Brown the meat."},
+                {"@type":"HowToStep","text":"Layer and bake."}
+              ]
+            }
+            </script>
+            </head><body></body></html>
+            """
+
+    def fake_urlopen(*args, **kwargs):
+        return DummyResponse()
+
+    monkeypatch.setattr("app.app.urlopen", fake_urlopen)
+    recipe = _extract_recipe_from_url("https://example.com/lasagna")
+    assert recipe is not None
+    assert recipe["title"] == "Test Lasagna"
+    assert recipe["servings"] == 8
+    assert recipe["prep_time"] == 20
+    assert recipe["cook_time"] == 60
+    assert recipe["steps"] == ["Brown the meat.", "Layer and bake."]
+    assert len(recipe["ingredients"]) == 2
