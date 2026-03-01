@@ -4,6 +4,7 @@ from app.database import RecipeDatabase
 def recipe_payload(title: str = "Pasta") -> dict:
     return {
         "title": title,
+        "category": "Dinner",
         "url": "https://example.com/pasta",
         "steps": ["Boil water", "Cook pasta"],
         "servings": 2,
@@ -41,6 +42,7 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
     loaded = db.get_recipe_by_id(created.id)
     assert loaded is not None
     assert loaded.title == "Pasta"
+    assert loaded.category == "Dinner"
     assert loaded.url == "https://example.com/pasta"
     assert {i.ingredient.name for i in loaded.ingredients if i.ingredient} == {"pasta", "salt"}
 
@@ -48,6 +50,7 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
         created.id,
         {
             "title": "Better Pasta",
+            "category": "Weeknight",
             "url": "https://example.com/better-pasta",
             "steps": ["Step 1"],
             "servings": 3,
@@ -61,6 +64,7 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
     )
     assert updated is not None
     assert updated.title == "Better Pasta"
+    assert updated.category == "Weeknight"
     assert updated.url == "https://example.com/better-pasta"
     assert [step.instruction for step in updated.steps] == ["Step 1"]
     assert {i.ingredient.name for i in updated.ingredients if i.ingredient} == {"pasta", "garlic"}
@@ -68,6 +72,69 @@ def test_recipe_crud_and_joined_ingredients(tmp_path):
     deleted = db.delete_recipe(created.id)
     assert deleted is True
     assert db.get_recipe_by_id(created.id) is None
+
+
+def test_orphan_ingredients_are_cleaned_after_update_and_delete(tmp_path):
+    db = RecipeDatabase(tmp_path / "test.db")
+
+    created = db.create_recipe(
+        {
+            "title": "Cleanup Test",
+            "steps": ["Cook"],
+            "ingredients": [
+                {"name": "Pasta", "quantity": 1, "unit": "box", "category": "pantry"},
+                {"name": "Salt", "quantity": 1, "unit": "tsp", "category": "pantry"},
+            ],
+        }
+    )
+
+    db.update_recipe(
+        created.id,
+        {
+            "title": "Cleanup Test Updated",
+            "steps": ["Cook"],
+            "ingredients": [
+                {"name": "Pasta", "quantity": 1, "unit": "box", "category": "pantry"},
+                {"name": "Garlic", "quantity": 2, "unit": "cloves", "category": "produce"},
+            ],
+        },
+    )
+
+    ingredient_names_after_update = {ingredient.name for ingredient in db.get_all_ingredients()}
+    assert "salt" not in ingredient_names_after_update
+    assert "pasta" in ingredient_names_after_update
+    assert "garlic" in ingredient_names_after_update
+
+    assert db.delete_recipe(created.id) is True
+    assert db.get_all_ingredients() == []
+
+
+def test_delete_ingredient_removes_recipe_links(tmp_path):
+    db = RecipeDatabase(tmp_path / "test.db")
+    recipe = db.create_recipe(
+        {
+            "title": "Delete Ingredient Test",
+            "steps": ["Cook"],
+            "ingredients": [
+                {"name": "Onion", "quantity": 1, "unit": "piece", "category": "produce"},
+                {"name": "Salt", "quantity": 1, "unit": "tsp", "category": "pantry"},
+            ],
+        }
+    )
+    assert recipe.id is not None
+
+    onion = next((item for item in db.get_all_ingredients() if item.name == "onion"), None)
+    assert onion is not None
+
+    deleted = db.delete_ingredient(onion.id)
+    assert deleted is not None
+    assert deleted["name"] == "onion"
+    assert deleted["affected_recipe_count"] == 1
+
+    loaded = db.get_recipe_by_id(recipe.id)
+    assert loaded is not None
+    ingredient_names = [item.ingredient.name for item in loaded.ingredients if item.ingredient]
+    assert ingredient_names == ["salt"]
 
 
 def test_shopping_list_mixed_units_and_empty_input(tmp_path):

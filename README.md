@@ -7,7 +7,9 @@ The app now runs in **multi-user mode** with exactly two users, each isolated to
 ## Features
 
 - Recipe CRUD with normalized shared ingredients
+- Optional recipe category field (editable in add/edit form)
 - Cooking Mode recipe detail with clear steps and ingredient panel
+- Recipe list grouped by category with collapsible sections and live search
 - Shopping list generation from selected recipes
 - Recipe suggestions based on selected ingredients
 - Ingredient and stats endpoints for UI dashboards

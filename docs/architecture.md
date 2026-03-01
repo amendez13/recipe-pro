@@ -14,12 +14,15 @@
 - `id INTEGER PRIMARY KEY`
 - `name TEXT UNIQUE NOT NULL` (normalized lowercase + trimmed)
 - `category TEXT NULL`
+- `default_available INTEGER NOT NULL DEFAULT 0`
 
 ### `recipes`
 
 - `id INTEGER PRIMARY KEY`
 - `title TEXT NOT NULL`
+- `category TEXT NULL`
 - `instructions TEXT NOT NULL`
+- `url TEXT NULL`
 - `servings INTEGER NULL`
 - `prep_time INTEGER NULL`
 - `cook_time INTEGER NULL`
@@ -54,9 +57,9 @@
 
 ## Frontend Views
 
-- Recipe list + search + selection state for shopping list
+- Recipe list grouped by recipe category with collapsible category sections + title search
 - Recipe detail cooking mode
-- Add/edit recipe form with dynamic ingredient rows
+- Add/edit recipe form with category field + dynamic ingredient rows
 - Shopping list view grouped by category
 - Recipe finder view using ingredient selection + suggestions
 - Login view + authenticated app shell

@@ -56,6 +56,7 @@ class RecipeDatabase:
                 CREATE TABLE IF NOT EXISTS recipes (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
+                    category TEXT,
                     instructions TEXT NOT NULL,
                     url TEXT,
                     servings INTEGER,
@@ -71,6 +72,8 @@ class RecipeDatabase:
             }
             if "url" not in recipe_columns:
                 conn.execute("ALTER TABLE recipes ADD COLUMN url TEXT")
+            if "category" not in recipe_columns:
+                conn.execute("ALTER TABLE recipes ADD COLUMN category TEXT")
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS recipe_ingredients (
@@ -160,6 +163,13 @@ class RecipeDatabase:
     def _parse_steps_from_instructions(instructions: str) -> list[str]:
         return [line.strip() for line in instructions.splitlines() if line.strip()]
 
+    @staticmethod
+    def _normalize_recipe_category(value: Any) -> Optional[str]:
+        if isinstance(value, str):
+            cleaned = value.strip()
+            return cleaned or None
+        return None
+
     def _extract_steps(self, recipe_data: dict[str, Any]) -> list[str]:
         raw_steps = recipe_data.get("steps")
         if isinstance(raw_steps, list):
@@ -167,6 +177,21 @@ class RecipeDatabase:
             if steps:
                 return steps
         return self._parse_steps_from_instructions(str(recipe_data.get("instructions", "")))
+
+    @staticmethod
+    def _cleanup_orphan_ingredients(conn: sqlite3.Connection) -> int:
+        cursor = conn.execute(
+            """
+            DELETE FROM ingredients
+            WHERE id IN (
+                SELECT i.id
+                FROM ingredients i
+                LEFT JOIN recipe_ingredients ri ON ri.ingredient_id = i.id
+                WHERE ri.id IS NULL
+            )
+            """
+        )
+        return cursor.rowcount
 
     def get_or_create_ingredient(
         self,
@@ -248,11 +273,48 @@ class RecipeDatabase:
             ).fetchone()
         return Ingredient.from_row(dict(row)) if row else None
 
+    def delete_ingredient(self, ingredient_id: int) -> Optional[dict[str, Any]]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id, name FROM ingredients WHERE id = ?",
+                (ingredient_id,),
+            ).fetchone()
+            if not row:
+                return None
+
+            usage_rows = conn.execute(
+                """
+                SELECT r.id, r.title
+                FROM recipe_ingredients ri
+                INNER JOIN recipes r ON r.id = ri.recipe_id
+                WHERE ri.ingredient_id = ?
+                ORDER BY r.title ASC
+                """,
+                (ingredient_id,),
+            ).fetchall()
+            recipe_ids = sorted({int(item["id"]) for item in usage_rows})
+            recipe_titles = sorted({str(item["title"]) for item in usage_rows})
+
+            usage_delete = conn.execute(
+                "DELETE FROM recipe_ingredients WHERE ingredient_id = ?",
+                (ingredient_id,),
+            )
+            conn.execute("DELETE FROM ingredients WHERE id = ?", (ingredient_id,))
+            conn.commit()
+            return {
+                "id": int(row["id"]),
+                "name": str(row["name"]),
+                "removed_recipe_links": usage_delete.rowcount,
+                "affected_recipe_count": len(recipe_ids),
+                "affected_recipe_ids": recipe_ids,
+                "affected_recipe_titles": recipe_titles,
+            }
+
     def get_recipes_by_ingredient(self, ingredient_id: int) -> list[Recipe]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
-                SELECT r.id, r.title, r.instructions, r.url, r.servings, r.prep_time, r.cook_time,
+                SELECT r.id, r.title, r.category, r.instructions, r.url, r.servings, r.prep_time, r.cook_time,
                        r.created_at, r.updated_at
                 FROM recipes r
                 INNER JOIN recipe_ingredients ri ON ri.recipe_id = r.id
@@ -272,11 +334,12 @@ class RecipeDatabase:
         with self._connect() as conn:
             cursor = conn.execute(
                 """
-                INSERT INTO recipes (title, instructions, url, servings, prep_time, cook_time, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO recipes (title, category, instructions, url, servings, prep_time, cook_time, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     recipe_data.get("title", ""),
+                    self._normalize_recipe_category(recipe_data.get("category")),
                     instructions_text,
                     recipe_data.get("url"),
                     recipe_data.get("servings"),
@@ -326,7 +389,7 @@ class RecipeDatabase:
 
     def get_all_recipes(self, search: Optional[str] = None) -> list[Recipe]:
         query = (
-            "SELECT id, title, instructions, url, servings, prep_time, cook_time, created_at, updated_at "
+            "SELECT id, title, category, instructions, url, servings, prep_time, cook_time, created_at, updated_at "
             "FROM recipes"
         )
         params: tuple[Any, ...] = ()
@@ -382,7 +445,7 @@ class RecipeDatabase:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT id, title, instructions, url, servings, prep_time, cook_time, created_at, updated_at
+                SELECT id, title, category, instructions, url, servings, prep_time, cook_time, created_at, updated_at
                 FROM recipes
                 WHERE id = ?
                 """,
@@ -416,11 +479,12 @@ class RecipeDatabase:
             conn.execute(
                 """
                 UPDATE recipes
-                SET title = ?, instructions = ?, url = ?, servings = ?, prep_time = ?, cook_time = ?, updated_at = ?
+                SET title = ?, category = ?, instructions = ?, url = ?, servings = ?, prep_time = ?, cook_time = ?, updated_at = ?
                 WHERE id = ?
                 """,
                 (
                     recipe_data.get("title", ""),
+                    self._normalize_recipe_category(recipe_data.get("category")),
                     instructions_text,
                     recipe_data.get("url"),
                     recipe_data.get("servings"),
@@ -464,6 +528,7 @@ class RecipeDatabase:
                     (recipe_id, index, instruction),
                 )
 
+            self._cleanup_orphan_ingredients(conn)
             conn.commit()
 
         return self.get_recipe_by_id(recipe_id)
@@ -471,6 +536,8 @@ class RecipeDatabase:
     def delete_recipe(self, recipe_id: int) -> bool:
         with self._connect() as conn:
             cursor = conn.execute("DELETE FROM recipes WHERE id = ?", (recipe_id,))
+            if cursor.rowcount > 0:
+                self._cleanup_orphan_ingredients(conn)
             conn.commit()
             return cursor.rowcount > 0
 

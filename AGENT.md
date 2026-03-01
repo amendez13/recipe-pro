@@ -54,7 +54,9 @@ ingredients
 recipes
 ├── id (PRIMARY KEY)
 ├── title
+├── category (optional: dinner, soup, dessert, etc.)
 ├── instructions (TEXT - compatibility field, derived from steps)
+├── url (optional: source link when imported or manually provided)
 ├── servings (optional)
 ├── prep_time (optional, minutes)
 ├── cook_time (optional, minutes)
@@ -138,8 +140,9 @@ recipe_ingredients (junction table)
 ## UI Views
 
 ### Home / Recipe List
-- Grid or list of recipe cards
-- Search/filter functionality
+- Recipes grouped by category
+- Collapsible/minimizable category sections
+- Search/filter functionality (title search remains active)
 - Compact list on mobile with clickable title to open recipe
 
 ### Recipe Detail (Cooking Mode)
@@ -151,6 +154,7 @@ recipe_ingredients (junction table)
 
 ### Add/Edit Recipe
 - Title input
+- Recipe category input (optional)
 - Step-by-step entry (add/remove step rows)
 - Ingredient entry with autocomplete from existing ingredients
 - Dynamic add/remove ingredient rows

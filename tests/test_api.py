@@ -1,7 +1,7 @@
 from fastapi.testclient import TestClient
 import pytest
 
-from app.app import _extract_recipe_from_url, create_app
+from app.app import _extract_recipe_from_url, _normalize_import_recipe, create_app
 from app.auth import hash_password
 from app.config import AuthConfig, Config, DatabaseConfig, UserConfig, WebConfig
 
@@ -68,6 +68,7 @@ def auth_client(tmp_path):
 def create_recipe(client: TestClient, title: str = "Pasta") -> dict:
     payload = {
         "title": title,
+        "category": "Dinner",
         "url": "https://example.com/pasta",
         "steps": ["Step 1", "Step 2"],
         "servings": 2,
@@ -240,6 +241,7 @@ def test_recipe_crud_and_search(client):
     list_resp = client.get("/api/recipes")
     assert list_resp.status_code == 200
     assert len(list_resp.json()) == 1
+    assert list_resp.json()[0]["category"] == "Dinner"
 
     search_resp = client.get("/api/recipes?search=Carbon")
     assert search_resp.status_code == 200
@@ -247,12 +249,14 @@ def test_recipe_crud_and_search(client):
 
     detail_resp = client.get(f"/api/recipes/{created['id']}")
     assert detail_resp.status_code == 200
+    assert detail_resp.json()["category"] == "Dinner"
     assert detail_resp.json()["url"] == "https://example.com/pasta"
     assert len(detail_resp.json()["ingredients"]) == 2
     assert detail_resp.json()["steps"] == ["Step 1", "Step 2"]
 
     update_payload = {
         "title": "Pasta Deluxe",
+        "category": "Special Occasion",
         "url": "https://example.com/pasta-deluxe",
         "steps": ["Step 1 revised"],
         "servings": 4,
@@ -263,6 +267,7 @@ def test_recipe_crud_and_search(client):
     update_resp = client.put(f"/api/recipes/{created['id']}", json=update_payload)
     assert update_resp.status_code == 200
     assert update_resp.json()["title"] == "Pasta Deluxe"
+    assert update_resp.json()["category"] == "Special Occasion"
     assert update_resp.json()["url"] == "https://example.com/pasta-deluxe"
     assert update_resp.json()["steps"] == ["Step 1 revised"]
 
@@ -444,6 +449,33 @@ def test_recipe_import_preview_normalizes_null_source_and_unit(client, monkeypat
 
     response = client.post("/api/recipes/import-preview", json={"text": "eggs recipe"})
     assert response.status_code == 422
+
+
+def test_normalize_import_recipe_parses_ranges_and_notes_consistently():
+    normalized = _normalize_import_recipe(
+        {
+            "title": "Range Test",
+            "steps": ["Mix"],
+            "ingredients": [
+                {"name": "1-2 teaspoons salt (adjust to taste)", "quantity": None, "unit": None, "notes": None},
+                {"name": "1 1/2 cups flour, sifted", "quantity": None, "unit": None, "notes": None},
+            ],
+        }
+    )
+
+    assert len(normalized["ingredients"]) == 2
+    salt = normalized["ingredients"][0]
+    flour = normalized["ingredients"][1]
+
+    assert salt["name"] == "salt"
+    assert salt["quantity"] == 1.0
+    assert salt["unit"] == "teaspoon"
+    assert salt["notes"] == "quantity range: 1-2; adjust to taste"
+
+    assert flour["name"] == "flour"
+    assert flour["quantity"] == 1.5
+    assert flour["unit"] == "cup"
+    assert flour["notes"] == "sifted"
 
 
 def test_extract_recipe_from_url_json_ld(monkeypatch):

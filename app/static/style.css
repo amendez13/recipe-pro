@@ -212,6 +212,72 @@ h3 {
     gap: 0.95rem;
 }
 
+#recipe-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+}
+
+.category-group {
+    padding: 0.55rem 0.62rem;
+}
+
+.category-details {
+    width: 100%;
+}
+
+.category-summary {
+    list-style: none;
+    cursor: pointer;
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.6rem;
+    padding: 0.2rem 0.15rem 0.55rem;
+}
+
+.category-summary::-webkit-details-marker {
+    display: none;
+}
+
+.category-summary:focus-visible {
+    outline: none;
+    border-radius: 10px;
+    box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.category-summary::before {
+    content: "▾";
+    color: var(--primary);
+    font-weight: 700;
+    margin-right: 0.35rem;
+}
+
+.category-details:not([open]) .category-summary::before {
+    content: "▸";
+}
+
+.category-summary-title {
+    display: inline-block;
+    font-family: "Cormorant Garamond", Georgia, serif;
+    color: var(--heading);
+    font-size: clamp(1.15rem, 2vw, 1.5rem);
+    font-weight: 700;
+}
+
+.category-summary-count {
+    color: var(--text-soft);
+    font-size: 0.84rem;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.16rem 0.48rem;
+    background: #fff;
+}
+
+.category-recipes {
+    padding-top: 0.1rem;
+}
+
 .stack {
     display: flex;
     flex-direction: column;
@@ -606,6 +672,80 @@ label {
     background: var(--primary-soft);
 }
 
+.ingredient-table-wrap {
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    background: #fff;
+    overflow: auto;
+    max-height: 360px;
+}
+
+.ingredient-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 700px;
+}
+
+.ingredient-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: #fff;
+    border-bottom: 1px solid var(--line);
+    text-align: left;
+    color: var(--heading);
+    font-size: 0.84rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    padding: 0.55rem 0.5rem;
+}
+
+.ingredient-table tbody td {
+    border-bottom: 1px solid #edf1ec;
+    padding: 0.5rem;
+    vertical-align: middle;
+}
+
+.ingredient-col-default {
+    width: 90px;
+}
+
+.ingredient-col-default input {
+    width: auto;
+}
+
+.ingredient-col-name {
+    font-weight: 600;
+}
+
+.ingredient-col-delete {
+    width: 86px;
+}
+
+.ingredient-delete-btn {
+    border-radius: 999px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    line-height: 1;
+    font-size: 1.05rem;
+    color: var(--danger);
+    border-color: #d8b3ad;
+}
+
+.ingredient-usage-scroll {
+    white-space: nowrap;
+    overflow-x: auto;
+    overflow-y: hidden;
+    max-width: 100%;
+    color: var(--text-soft);
+    padding-bottom: 0.1rem;
+}
+
+.ingredient-empty {
+    padding: 0.75rem 0.5rem;
+}
+
 .selected-filter-list {
     display: flex;
     flex-wrap: wrap;
@@ -671,6 +811,44 @@ label {
 .message.limit-hit {
     color: var(--heading);
     font-weight: 700;
+}
+
+.shopping-item-label {
+    display: flex;
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 0.45rem;
+    color: var(--text-main);
+    line-height: 1.35;
+}
+
+.shopping-item-label input[type="checkbox"] {
+    width: auto;
+    margin-top: 0.12rem;
+    flex: 0 0 auto;
+}
+
+.shopping-item-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+#shopping-categories ul {
+    margin: 0.35rem 0 0;
+    padding-left: 0;
+    list-style: none;
+    display: grid;
+    gap: 0.62rem;
+}
+
+#shopping-categories li {
+    padding: 0.34rem 0.1rem;
+    border-bottom: 1px dashed var(--line);
+}
+
+#shopping-categories li:last-child {
+    border-bottom: none;
 }
 
 .chip {

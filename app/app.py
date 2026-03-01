@@ -82,6 +82,7 @@ class IngredientMergePreviewPayload(BaseModel):
 
 class RecipePayload(BaseModel):
     title: str = Field(min_length=1)
+    category: Optional[str] = None
     instructions: str = ""
     url: Optional[str] = None
     steps: list[str] = Field(default_factory=list)
@@ -92,6 +93,7 @@ class RecipePayload(BaseModel):
 
     @model_validator(mode="after")
     def validate_instructions_or_steps(self) -> "RecipePayload":
+        self.category = self.category.strip() if isinstance(self.category, str) and self.category.strip() else None
         normalized_steps = [step.strip() for step in self.steps if isinstance(step, str) and step.strip()]
         if normalized_steps:
             self.steps = normalized_steps
@@ -209,25 +211,148 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
     if not cleaned:
         return {}
 
-    pattern = re.compile(
-        r"^(?:(?P<qty>\d+(?:\.\d+)?(?:/\d+)?(?:\s+\d+/\d+)?)\s+)?(?:(?P<unit>[A-Za-z]+)\s+)?(?P<name>.+)$"
+    unit_aliases = {
+        "teaspoon": "teaspoon",
+        "teaspoons": "teaspoon",
+        "tsp": "teaspoon",
+        "tablespoon": "tablespoon",
+        "tablespoons": "tablespoon",
+        "tbsp": "tablespoon",
+        "cup": "cup",
+        "cups": "cup",
+        "oz": "oz",
+        "ounce": "oz",
+        "ounces": "oz",
+        "lb": "lb",
+        "lbs": "lb",
+        "pound": "lb",
+        "pounds": "lb",
+        "g": "g",
+        "gram": "g",
+        "grams": "g",
+        "kg": "kg",
+        "ml": "ml",
+        "l": "l",
+        "liter": "l",
+        "liters": "l",
+        "clove": "clove",
+        "cloves": "clove",
+        "can": "can",
+        "cans": "can",
+        "piece": "piece",
+        "pieces": "piece",
+    }
+
+    notes_parts: list[str] = []
+    base = cleaned
+    for match in re.finditer(r"\(([^()]+)\)", base):
+        note_text = re.sub(r"\s+", " ", match.group(1)).strip(" ,.;:")
+        if note_text:
+            notes_parts.append(note_text)
+    base = re.sub(r"\([^()]+\)", "", base)
+    base = re.sub(r"\s+", " ", base).strip(" ,.;:")
+
+    quantity = 1.0
+    unit = "item"
+    remainder = base
+
+    range_match = re.match(
+        r"^(?P<start>\d+(?:\.\d+)?(?:/\d+)?(?:\s+\d+/\d+)?)\s*(?:-|–|to)\s*(?P<end>\d+(?:\.\d+)?(?:/\d+)?(?:\s+\d+/\d+)?)\s+(?P<rest>.+)$",
+        remainder,
+        flags=re.IGNORECASE,
     )
-    match = pattern.match(cleaned)
-    if not match:
-        return {"name": cleaned, "quantity": 1.0, "unit": "item", "category": None, "notes": None}
+    if range_match:
+        start_token = range_match.group("start")
+        end_token = range_match.group("end")
+        try:
+            start_value = _parse_fractional_number(start_token)
+        except ValueError:
+            start_value = None
+        try:
+            end_value = _parse_fractional_number(end_token)
+        except ValueError:
+            end_value = None
+        if start_value is not None and start_value > 0:
+            quantity = start_value
+        if start_value is not None and end_value is not None and end_value >= start_value:
+            notes_parts.insert(0, f"quantity range: {start_token}-{end_token}")
+        remainder = range_match.group("rest").strip()
+    else:
+        qty_match = re.match(
+            r"^(?P<qty>a|an|\d+(?:\.\d+)?(?:/\d+)?(?:\s+\d+/\d+)?)\s+(?P<rest>.+)$",
+            remainder,
+            flags=re.IGNORECASE,
+        )
+        if qty_match:
+            qty_token = qty_match.group("qty").lower()
+            if qty_token in {"a", "an"}:
+                quantity = 1.0
+            else:
+                try:
+                    parsed_qty = _parse_fractional_number(qty_token)
+                    if parsed_qty is not None and parsed_qty > 0:
+                        quantity = parsed_qty
+                except ValueError:
+                    quantity = 1.0
+            remainder = qty_match.group("rest").strip()
 
-    qty_token = match.group("qty") or "1"
-    unit_token = (match.group("unit") or "").strip().lower()
-    name_token = (match.group("name") or "").strip(" ,.;:")
+    unit_match = re.match(r"^(?P<unit>[A-Za-z]+)\b(?P<rest>.*)$", remainder)
+    if unit_match:
+        raw_unit = unit_match.group("unit").strip().lower().rstrip(".")
+        canonical_unit = unit_aliases.get(raw_unit)
+        if canonical_unit:
+            unit = canonical_unit
+            remainder = unit_match.group("rest").strip()
 
-    try:
-        quantity = _parse_fractional_number(qty_token) or 1.0
-    except ValueError:
-        quantity = 1.0
-    if quantity < 0:
-        quantity = 1.0
-    unit = unit_token or "item"
-    return {"name": name_token or cleaned, "quantity": quantity, "unit": unit, "category": None, "notes": None}
+    name_token = remainder.strip(" ,.;:") or base
+    if "," in name_token:
+        before, after = name_token.split(",", 1)
+        trailing = after.strip(" ,.;:")
+        if trailing:
+            notes_parts.append(trailing)
+        name_token = before.strip(" ,.;:")
+
+    notes = "; ".join([note for note in notes_parts if note]) or None
+    return {"name": name_token or cleaned, "quantity": quantity, "unit": unit, "category": None, "notes": notes}
+
+
+def _normalize_import_ingredient(item: Any) -> Optional[dict[str, Any]]:
+    if isinstance(item, str):
+        parsed = _parse_ingredient_line(item)
+        return parsed if parsed.get("name") else None
+    if not isinstance(item, dict):
+        return None
+
+    raw_name = str(item.get("name") or "").strip()
+    raw_text = str(item.get("text") or "").strip()
+    source_text = raw_name or raw_text
+    parsed = _parse_ingredient_line(source_text) if source_text else {}
+    if not parsed:
+        return None
+
+    explicit_quantity = item.get("quantity")
+    if explicit_quantity is not None:
+        try:
+            parsed_quantity = float(explicit_quantity)
+        except (TypeError, ValueError):
+            parsed_quantity = None
+        if parsed_quantity is not None and parsed_quantity > 0:
+            parsed["quantity"] = parsed_quantity
+
+    explicit_unit = str(item.get("unit") or "").strip().lower()
+    if explicit_unit:
+        parsed["unit"] = explicit_unit
+
+    explicit_category = str(item.get("category") or "").strip() or None
+    parsed["category"] = explicit_category
+
+    explicit_notes = str(item.get("notes") or "").strip() or None
+    if explicit_notes and parsed.get("notes"):
+        parsed["notes"] = f"{parsed['notes']}; {explicit_notes}"
+    elif explicit_notes:
+        parsed["notes"] = explicit_notes
+
+    return parsed if parsed.get("name") else None
 
 
 def _find_recipe_node(candidate: Any) -> Optional[dict[str, Any]]:
@@ -294,22 +419,29 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
         ingredients_raw = recipe_node.get("recipeIngredient") or recipe_node.get("ingredients") or []
         if isinstance(ingredients_raw, str):
             ingredients_raw = [ingredients_raw]
-        ingredients = []
+        ingredients: list[Any] = []
         for entry in ingredients_raw:
             if isinstance(entry, str):
-                parsed_line = _parse_ingredient_line(entry)
-                if parsed_line.get("name"):
-                    ingredients.append(parsed_line)
+                ingredients.append(entry)
             elif isinstance(entry, dict):
-                parsed_line = _parse_ingredient_line(str(entry.get("text") or entry.get("name") or ""))
-                if parsed_line.get("name"):
-                    ingredients.append(parsed_line)
+                candidate = str(entry.get("text") or entry.get("name") or "").strip()
+                if candidate:
+                    ingredients.append(
+                        {
+                            "name": candidate,
+                            "quantity": entry.get("quantity"),
+                            "unit": entry.get("unit"),
+                            "category": entry.get("category"),
+                            "notes": entry.get("notes"),
+                        }
+                    )
 
         steps = _extract_steps(recipe_node)
         if not title or not steps or not ingredients:
             continue
 
-        return {
+        return _normalize_import_recipe(
+            {
             "title": title,
             "steps": steps,
             "instructions": "\n".join(steps),
@@ -318,7 +450,8 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
             "cook_time": _parse_duration_minutes(recipe_node.get("cookTime")),
             "ingredients": ingredients,
             "source_url": url,
-        }
+            }
+        )
 
     return None
 
@@ -380,19 +513,10 @@ def _normalize_import_recipe(data: dict[str, Any]) -> dict[str, Any]:
     steps = [str(step).strip() for step in data.get("steps", []) if str(step).strip()]
     ingredients = []
     for item in data.get("ingredients", []):
-        name = str(item.get("name") or "").strip()
-        unit = str(item.get("unit") or "").strip() or "item"
-        if not name:
+        normalized = _normalize_import_ingredient(item)
+        if not normalized:
             continue
-        ingredients.append(
-            {
-                "name": name,
-                "quantity": float(item.get("quantity") or 0),
-                "unit": unit,
-                "category": str(item.get("category") or "").strip() or None,
-                "notes": str(item.get("notes") or "").strip() or None,
-            }
-        )
+        ingredients.append(normalized)
 
     return {
         "title": str(data.get("title") or "").strip(),
@@ -568,6 +692,7 @@ def create_app(config: Config | None = None) -> FastAPI:
             {
                 "id": recipe.id,
                 "title": recipe.title,
+                "category": recipe.category,
                 "url": recipe.url,
                 "servings": recipe.servings,
                 "prep_time": recipe.prep_time,
@@ -678,6 +803,15 @@ def create_app(config: Config | None = None) -> FastAPI:
         if updated is None:
             raise HTTPException(status_code=404, detail="Ingredient not found")
         return updated.to_dict()
+
+    @app.delete("/api/ingredients/{ingredient_id}")
+    async def delete_ingredient(request: Request, ingredient_id: int) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        deleted = db.delete_ingredient(ingredient_id)
+        if deleted is None:
+            raise HTTPException(status_code=404, detail="Ingredient not found")
+        return deleted
 
     @app.post("/api/ingredients/merge-preview")
     async def ingredient_merge_preview(

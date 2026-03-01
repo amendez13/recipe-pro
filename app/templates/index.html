@@ -140,6 +140,7 @@
                     </div>
                     <form id="recipe-form" class="stack">
                         <label>Title<input id="f-title" required></label>
+                        <label>Category (optional)<input id="f-category" placeholder="Dinner, Soup, Dessert..."></label>
                         <label>Recipe URL (optional)<input id="f-url" type="url" placeholder="https://example.com/recipe"></label>
                         <div class="row between gap align-center">
                             <h3>Steps</h3>
@@ -214,7 +215,19 @@
                 <input id="ingredient-default-search" type="search" placeholder="Type to filter ingredients...">
             </label>
             <div id="ingredient-default-message" class="message"></div>
-            <div id="ingredient-default-list" class="recipe-filter-list"></div>
+            <div class="ingredient-table-wrap">
+                <table class="ingredient-table">
+                    <thead>
+                        <tr>
+                            <th>Default</th>
+                            <th>Ingredient</th>
+                            <th>Delete</th>
+                            <th>Appears In Recipes</th>
+                        </tr>
+                    </thead>
+                    <tbody id="ingredient-default-list"></tbody>
+                </table>
+            </div>
             <section class="merge-ingredients-panel">
                 <h3>Merge Ingredients</h3>
                 <p class="muted">Choose a primary ingredient to keep and a secondary ingredient to remove.</p>

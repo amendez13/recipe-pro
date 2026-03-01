@@ -105,6 +105,7 @@ class RecipeStep:
 class Recipe:
     id: Optional[int] = None
     title: str = ""
+    category: Optional[str] = None
     instructions: str = ""
     url: Optional[str] = None
     servings: Optional[int] = None
@@ -122,6 +123,7 @@ class Recipe:
         return cls(
             id=row.get("id"),
             title=row.get("title", ""),
+            category=row.get("category"),
             instructions=row.get("instructions", ""),
             url=row.get("url"),
             servings=row.get("servings"),
@@ -135,6 +137,7 @@ class Recipe:
         return {
             "id": self.id,
             "title": self.title,
+            "category": self.category,
             "instructions": self.instructions,
             "url": self.url,
             "servings": self.servings,
