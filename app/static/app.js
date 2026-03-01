@@ -13,6 +13,14 @@ const state = {
     authReady: false,
 };
 
+function formatQuantityUnit(quantity, unit) {
+    const normalizedUnit = String(unit || '').trim().toLowerCase();
+    if (!normalizedUnit || normalizedUnit === 'nonunit') {
+        return `${quantity}`;
+    }
+    return `${quantity} ${unit}`;
+}
+
 const api = {
     async request(url, options = {}, meta = {}) {
         const response = await fetch(url, options);
@@ -355,7 +363,7 @@ async function renderDetailView(recipeId) {
         recipe.ingredients.forEach((item) => {
             const li = document.createElement('li');
             const name = item.ingredient?.name || `Ingredient #${item.ingredient_id}`;
-            li.textContent = `${item.quantity} ${item.unit} ${name}${item.notes ? ` (${item.notes})` : ''}`;
+            li.textContent = `${formatQuantityUnit(item.quantity, item.unit)} ${name}${item.notes ? ` (${item.notes})` : ''}`;
             ingredientsEl.appendChild(li);
         });
 
@@ -460,12 +468,14 @@ async function renderDetailView(recipeId) {
 }
 
 function ingredientRow(initial = {}) {
+    const initialUnit = (initial.unit || '').trim();
+    const displayUnit = initialUnit === 'nonunit' ? '' : initialUnit;
     const row = document.createElement('div');
     row.className = 'row gap responsive ingredient-row';
     row.innerHTML = `
         <input class="i-name" placeholder="name" value="${escapeHtml(initial.name || '')}" required>
         <input class="i-qty" type="number" min="0" step="0.01" placeholder="qty" value="${initial.quantity ?? ''}" required>
-        <input class="i-unit" placeholder="unit" value="${escapeHtml(initial.unit || '')}" required>
+        <input class="i-unit" placeholder="unit (optional)" value="${escapeHtml(displayUnit)}">
         <input class="i-category" placeholder="category" value="${escapeHtml(initial.category || '')}">
         <input class="i-notes" placeholder="notes" value="${escapeHtml(initial.notes || '')}">
         <button type="button" class="danger remove-row">Remove</button>
@@ -490,8 +500,8 @@ function collectFormPayload() {
     document.querySelectorAll('.ingredient-row').forEach((row) => {
         const name = row.querySelector('.i-name').value.trim();
         const quantity = Number(row.querySelector('.i-qty').value);
-        const unit = row.querySelector('.i-unit').value.trim();
-        if (!name || !unit || Number.isNaN(quantity)) {
+        const unit = row.querySelector('.i-unit').value.trim() || 'nonunit';
+        if (!name || Number.isNaN(quantity)) {
             return;
         }
         ingredients.push({
@@ -824,7 +834,7 @@ async function renderShoppingView() {
                     li.innerHTML = `
                         <label>
                             <input type="checkbox" data-shopping-id="${id}" ${state.shoppingChecks.has(id) ? 'checked' : ''}>
-                            ${item.total_quantity} ${escapeHtml(item.unit)} ${escapeHtml(item.name)} (${escapeHtml(item.recipes.join(', '))})
+                            ${escapeHtml(formatQuantityUnit(item.total_quantity, item.unit))} ${escapeHtml(item.name)} (${escapeHtml(item.recipes.join(', '))})
                         </label>
                     `;
                     list.appendChild(li);
