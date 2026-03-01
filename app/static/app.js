@@ -460,12 +460,40 @@ async function renderDetailView(recipeId) {
 }
 
 function ingredientRow(initial = {}) {
+    const unitOptions = [
+        'nonunit',
+        'g',
+        'kg',
+        'ml',
+        'l',
+        'tsp',
+        'tbsp',
+        'cup',
+        'oz',
+        'lb',
+        'piece',
+        'clove',
+        'slice',
+        'can',
+        'pinch',
+    ];
+    const initialUnit = (initial.unit || '').trim() || 'nonunit';
+    if (!unitOptions.includes(initialUnit)) {
+        unitOptions.push(initialUnit);
+    }
+    const unitMarkup = unitOptions
+        .map((unit) => {
+            const selected = unit === initialUnit ? 'selected' : '';
+            return `<option value="${escapeHtml(unit)}" ${selected}>${escapeHtml(unit)}</option>`;
+        })
+        .join('');
+
     const row = document.createElement('div');
     row.className = 'row gap responsive ingredient-row';
     row.innerHTML = `
         <input class="i-name" placeholder="name" value="${escapeHtml(initial.name || '')}" required>
         <input class="i-qty" type="number" min="0" step="0.01" placeholder="qty" value="${initial.quantity ?? ''}" required>
-        <input class="i-unit" placeholder="unit" value="${escapeHtml(initial.unit || '')}" required>
+        <select class="i-unit" required>${unitMarkup}</select>
         <input class="i-category" placeholder="category" value="${escapeHtml(initial.category || '')}">
         <input class="i-notes" placeholder="notes" value="${escapeHtml(initial.notes || '')}">
         <button type="button" class="danger remove-row">Remove</button>
@@ -487,19 +515,26 @@ function stepRow(initialStep = '') {
 
 function collectFormPayload() {
     const ingredients = [];
+    let hasInvalidIngredientRow = false;
     document.querySelectorAll('.ingredient-row').forEach((row) => {
         const name = row.querySelector('.i-name').value.trim();
         const quantity = Number(row.querySelector('.i-qty').value);
         const unit = row.querySelector('.i-unit').value.trim();
+        const category = row.querySelector('.i-category').value.trim();
+        const notes = row.querySelector('.i-notes').value.trim();
+        const touched = name || row.querySelector('.i-qty').value.trim() || category || notes;
         if (!name || !unit || Number.isNaN(quantity)) {
+            if (touched) {
+                hasInvalidIngredientRow = true;
+            }
             return;
         }
         ingredients.push({
             name,
             quantity,
             unit,
-            category: row.querySelector('.i-category').value.trim() || null,
-            notes: row.querySelector('.i-notes').value.trim() || null,
+            category: category || null,
+            notes: notes || null,
         });
     });
 
@@ -512,14 +547,17 @@ function collectFormPayload() {
     });
 
     return {
-        title: document.getElementById('f-title').value.trim(),
-        url: document.getElementById('f-url').value.trim() || null,
-        instructions: steps.join('\n'),
-        steps,
-        servings: Number(document.getElementById('f-servings').value) || null,
-        prep_time: Number(document.getElementById('f-prep').value) || null,
-        cook_time: Number(document.getElementById('f-cook').value) || null,
-        ingredients,
+        payload: {
+            title: document.getElementById('f-title').value.trim(),
+            url: document.getElementById('f-url').value.trim() || null,
+            instructions: steps.join('\n'),
+            steps,
+            servings: Number(document.getElementById('f-servings').value) || null,
+            prep_time: Number(document.getElementById('f-prep').value) || null,
+            cook_time: Number(document.getElementById('f-cook').value) || null,
+            ingredients,
+        },
+        hasInvalidIngredientRow,
     };
 }
 
@@ -668,9 +706,13 @@ async function renderFormView(recipeId = null) {
 
     form.addEventListener('submit', async (event) => {
         event.preventDefault();
-        const payload = collectFormPayload();
+        const { payload, hasInvalidIngredientRow } = collectFormPayload();
         if (!payload.title || payload.steps.length === 0) {
             setMessage(messageEl, 'Title and at least one step are required.', true);
+            return;
+        }
+        if (hasInvalidIngredientRow) {
+            setMessage(messageEl, 'Each ingredient must include name, quantity, and unit (use nonunit when needed).', true);
             return;
         }
 
