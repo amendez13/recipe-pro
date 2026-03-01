@@ -214,7 +214,7 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
     )
     match = pattern.match(cleaned)
     if not match:
-        return {"name": cleaned, "quantity": 1.0, "unit": "nonunit", "category": None, "notes": None}
+        return {"name": cleaned, "quantity": 1.0, "unit": "item", "category": None, "notes": None}
 
     qty_token = match.group("qty") or "1"
     unit_token = (match.group("unit") or "").strip().lower()
@@ -226,7 +226,7 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
         quantity = 1.0
     if quantity < 0:
         quantity = 1.0
-    unit = unit_token or "nonunit"
+    unit = unit_token or "item"
     return {"name": name_token or cleaned, "quantity": quantity, "unit": unit, "category": None, "notes": None}
 
 
@@ -381,7 +381,7 @@ def _normalize_import_recipe(data: dict[str, Any]) -> dict[str, Any]:
     ingredients = []
     for item in data.get("ingredients", []):
         name = str(item.get("name") or "").strip()
-        unit = str(item.get("unit") or "").strip() or "nonunit"
+        unit = str(item.get("unit") or "").strip() or "item"
         if not name:
             continue
         ingredients.append(
