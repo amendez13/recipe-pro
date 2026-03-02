@@ -819,12 +819,17 @@ async function renderFormView(recipeId = null) {
             importPayload = await api.getRecipeImportPreview(previewPayload);
             importPreviewEl.classList.remove('hidden');
             importConfirmBtn.classList.remove('hidden');
+            const warnings = Array.isArray(importPayload.warnings) ? importPayload.warnings : [];
+            const warningsHtml = warnings.length
+                ? `<div class="message error"><strong>Import warnings:</strong><br>${warnings.map((item) => escapeHtml(item)).join('<br>')}</div>`
+                : '';
             importPreviewEl.innerHTML = `
                 <h4>${escapeHtml(importPayload.title)}</h4>
                 <p class="muted">Servings: ${importPayload.servings ?? '-'} | Prep: ${importPayload.prep_time ?? '-'} | Cook: ${importPayload.cook_time ?? '-'}</p>
                 <p><strong>Steps:</strong> ${importPayload.steps.length}</p>
                 <p><strong>Ingredients:</strong> ${importPayload.ingredients.length}</p>
                 <p class="muted">Source: ${escapeHtml(importPayload.source_url || sourceLabel)}</p>
+                ${warningsHtml}
             `;
             setMessage(importMessageEl, 'Preview ready. Confirm to add this recipe.');
         } catch (err) {

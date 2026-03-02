@@ -910,6 +910,68 @@ def _enrich_ingredient_payload_names(ingredients: list[dict[str, Any]]) -> list[
     return enriched
 
 
+def _claude_runtime_healthcheck(run_probe: bool = False) -> dict[str, Any]:
+    enabled = os.getenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1") == "1"
+    cli_path = shutil.which("claude")
+    cli_found = bool(cli_path)
+    home_writable = os.access(str(Path.home()), os.W_OK)
+    result: dict[str, Any] = {
+        "translation_enabled": enabled,
+        "claude_cli_found": cli_found,
+        "claude_cli_path": cli_path,
+        "home_writable": home_writable,
+        "probe_ok": None,
+        "probe_error": None,
+    }
+    if run_probe and enabled and cli_found and home_writable:
+        probe_prompt = (
+            "Return only JSON with keys name_en and name_es. "
+            "Use values garlic and ajo."
+        )
+        command = [
+            "claude",
+            "-p",
+            probe_prompt,
+            "--output-format",
+            "json",
+            "--json-schema",
+            json.dumps(INGREDIENT_TRANSLATION_JSON_SCHEMA),
+        ]
+        try:
+            probe = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=8,
+            )
+            wrapper = json.loads(probe.stdout)
+            parsed: Optional[dict[str, Any]] = None
+            if isinstance(wrapper, dict) and wrapper.get("type") == "result":
+                if wrapper.get("is_error"):
+                    result["probe_ok"] = False
+                    result["probe_error"] = str((wrapper.get("errors") or ["unknown error"])[0])
+                else:
+                    structured = wrapper.get("structured_output")
+                    if isinstance(structured, dict):
+                        parsed = structured
+                    else:
+                        parsed = _extract_json_from_text(str(wrapper.get("result") or ""))
+            if parsed is not None:
+                name_en = str(parsed.get("name_en") or "").strip().lower()
+                name_es = str(parsed.get("name_es") or "").strip().lower()
+                result["probe_ok"] = bool(name_en and name_es)
+                if not result["probe_ok"]:
+                    result["probe_error"] = "probe returned incomplete translation payload"
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, json.JSONDecodeError, ValueError) as exc:
+            result["probe_ok"] = False
+            result["probe_error"] = str(exc)
+    basic_ready = enabled and cli_found and home_writable
+    result["ready_basic"] = basic_ready
+    result["ready"] = basic_ready and (result["probe_ok"] is not False)
+    return result
+
+
 def _run_claude_recipe_import(prompt: str, allow_web_fetch: bool = False) -> dict[str, Any]:
     command = [
         "claude",
@@ -1294,6 +1356,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def get_recipe_import_preview(request: Request, data: RecipeImportPayload) -> dict[str, Any]:
         user = _require_user(request)
         db = _db_for_user(user.username)
+        runtime_health = _claude_runtime_healthcheck(run_probe=False)
+        warnings: list[str] = []
+        if not runtime_health.get("ready_basic"):
+            warnings.append(
+                "AI processing is not fully available on server; import used deterministic fallback where needed."
+            )
         existing_name_en = {ingredient.name_en for ingredient in db.get_all_ingredients() if ingredient.name_en}
         if data.url:
             source_url = data.url.strip()
@@ -1307,6 +1375,9 @@ def create_app(config: Config | None = None) -> FastAPI:
                     extracted.get("ingredients", []),
                     existing_names=existing_name_en,
                 )
+                warnings.append("AI extraction was skipped because structured recipe data was found directly on the URL.")
+                extracted["warnings"] = warnings
+                extracted["ai_status"] = runtime_health
                 return extracted
 
             prompt = (
@@ -1323,6 +1394,8 @@ def create_app(config: Config | None = None) -> FastAPI:
             )
             if not result.get("ingredients"):
                 raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
+            result["warnings"] = warnings
+            result["ai_status"] = runtime_health
             return result
 
         source_text = (data.text or "").strip()
@@ -1345,7 +1418,14 @@ def create_app(config: Config | None = None) -> FastAPI:
         )
         if not result.get("ingredients"):
             raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
+        result["warnings"] = warnings
+        result["ai_status"] = runtime_health
         return result
+
+    @app.get("/api/import/health")
+    async def get_import_health(request: Request, probe: bool = False) -> dict[str, Any]:
+        _require_user(request)
+        return _claude_runtime_healthcheck(run_probe=probe)
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:
