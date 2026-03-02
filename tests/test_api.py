@@ -501,7 +501,8 @@ def test_normalize_import_recipe_parses_ranges_and_notes_consistently():
     assert flour["notes"] == "sifted"
 
 
-def test_post_process_import_ingredients_splits_compounds_and_cleans_units():
+def test_post_process_import_ingredients_splits_compounds_and_cleans_units(monkeypatch):
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "0")
     processed = _post_process_import_ingredients(
         [
             {
@@ -553,6 +554,37 @@ def test_post_process_import_ingredients_splits_compounds_and_cleans_units():
 
     garlic = next(item for item in processed if item["name_en"] == "garlic")
     assert garlic["unit"] == "clove"
+
+
+def test_post_process_import_ingredients_translates_name_es_with_ai(monkeypatch):
+    class DummyResult:
+        stdout = """
+        {"type":"result","is_error":false,"result":"{\\"name_en\\":\\"eggplant\\",\\"name_es\\":\\"berenjena\\"}"}
+        """
+
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_AVAILABLE", None)
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1")
+    monkeypatch.setattr("app.app.os.access", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.app.shutil.which", lambda *_args, **_kwargs: "claude")
+    monkeypatch.setattr("app.app.subprocess.run", lambda *args, **kwargs: DummyResult())
+
+    processed = _post_process_import_ingredients(
+        [
+            {
+                "name": "eggplant",
+                "name_en": "eggplant",
+                "name_es": "eggplant",
+                "quantity": 1,
+                "unit": "piece",
+                "category": "produce",
+                "notes": None,
+            }
+        ],
+        existing_names={"eggplant"},
+    )
+
+    assert processed[0]["name_en"] == "eggplant"
+    assert processed[0]["name_es"] == "berenjena"
 
 
 def test_complete_bilingual_name_with_ai(monkeypatch):

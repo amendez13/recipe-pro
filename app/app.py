@@ -484,11 +484,12 @@ def _post_process_import_ingredients(
             canonical_name = _canonicalize_import_name(clean_name, known_names)
             if not canonical_name:
                 continue
+            translated_en, translated_es = _complete_bilingual_name_with_ai(canonical_name, canonical_name)
             expanded.append(
                 {
-                    "name": canonical_name,
-                    "name_en": canonical_name,
-                    "name_es": canonical_name,
+                    "name": translated_en or canonical_name,
+                    "name_en": translated_en or canonical_name,
+                    "name_es": translated_es or translated_en or canonical_name,
                     "quantity": quantity,
                     "unit": clean_unit if clean_unit and clean_unit != "item" else "nonunit",
                     "category": category,
@@ -744,7 +745,7 @@ def _complete_bilingual_name_with_ai(name_en: Optional[str], name_es: Optional[s
     global _CLAUDE_TRANSLATION_AVAILABLE
     if _CLAUDE_TRANSLATION_AVAILABLE is False:
         return fallback, fallback
-    if os.getenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "0") != "1":
+    if os.getenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1") != "1":
         _CLAUDE_TRANSLATION_AVAILABLE = False
         return fallback, fallback
     if shutil.which("claude") is None:
