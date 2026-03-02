@@ -19,11 +19,13 @@ def recipe_payload(title: str = "Pasta") -> dict:
 
 def test_ingredient_normalization_and_dedup(tmp_path):
     db = RecipeDatabase(tmp_path / "test.db")
-    a = db.get_or_create_ingredient("  ONION  ", "produce")
-    b = db.get_or_create_ingredient("onion", "produce")
+    a = db.get_or_create_ingredient("  ONION  ", None, None, "produce")
+    b = db.get_or_create_ingredient("onion", None, "cebolla", "produce")
 
     assert a.id == b.id
     assert b.name == "onion"
+    assert b.name_en == "onion"
+    assert b.name_es == "cebolla"
     assert b.default_available is False
 
     updated = db.update_ingredient_default_available(b.id, True)
@@ -167,6 +169,8 @@ def test_shopping_list_mixed_units_and_empty_input(tmp_path):
     salt = [i for i in shopping["items"] if i["name"] == "salt" and i["unit"] == "tsp"][0]
     onions = [i for i in shopping["items"] if i["name"] == "onion"]
 
+    assert "name_en" in salt
+    assert "name_es" in salt
     assert salt["total_quantity"] == 3
     assert len(onions) == 2  # units differ, so separate rows
 

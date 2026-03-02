@@ -43,13 +43,15 @@ RECIPE_IMPORT_JSON_SCHEMA = {
             "items": {
                 "type": "object",
                 "properties": {
-                    "name": {"type": "string"},
+                    "name": {"type": ["string", "null"]},
+                    "name_en": {"type": ["string", "null"]},
+                    "name_es": {"type": ["string", "null"]},
                     "quantity": {"type": ["number", "null"]},
                     "unit": {"type": ["string", "null"]},
                     "category": {"type": ["string", "null"]},
                     "notes": {"type": ["string", "null"]},
                 },
-                "required": ["name", "quantity", "unit", "category", "notes"],
+                "required": ["name_en", "name_es", "quantity", "unit", "category", "notes"],
             },
         },
     },
@@ -58,11 +60,38 @@ RECIPE_IMPORT_JSON_SCHEMA = {
 
 
 class IngredientInput(BaseModel):
-    name: str = Field(min_length=1)
+    name: Optional[str] = None
+    name_en: Optional[str] = None
+    name_es: Optional[str] = None
     quantity: float = Field(ge=0)
     unit: str = Field(min_length=1)
     category: Optional[str] = None
     notes: Optional[str] = None
+
+    @model_validator(mode="after")
+    def validate_bilingual_names(self) -> "IngredientInput":
+        raw_name = (self.name or "").strip().lower()
+        raw_en = (self.name_en or "").strip().lower()
+        raw_es = (self.name_es or "").strip().lower()
+
+        if not raw_en and not raw_es and not raw_name:
+            raise ValueError("Ingredient requires at least one name")
+        if not raw_en:
+            raw_en = raw_name or raw_es
+        if not raw_es:
+            raw_es = raw_name or raw_en
+        if not raw_name:
+            raw_name = raw_en
+
+        self.name = raw_name
+        self.name_en = raw_en
+        self.name_es = raw_es
+        return self
+
+
+class IngredientNamesPayload(BaseModel):
+    name_en: str = Field(min_length=1)
+    name_es: str = Field(min_length=1)
 
 
 class IngredientPreferencePayload(BaseModel):
@@ -319,7 +348,11 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
 def _normalize_import_ingredient(item: Any) -> Optional[dict[str, Any]]:
     if isinstance(item, str):
         parsed = _parse_ingredient_line(item)
-        return parsed if parsed.get("name") else None
+        if not parsed or not parsed.get("name"):
+            return None
+        parsed["name_en"] = parsed["name"]
+        parsed["name_es"] = parsed["name"]
+        return parsed
     if not isinstance(item, dict):
         return None
 
@@ -329,6 +362,13 @@ def _normalize_import_ingredient(item: Any) -> Optional[dict[str, Any]]:
     parsed = _parse_ingredient_line(source_text) if source_text else {}
     if not parsed:
         return None
+
+    explicit_name_en = str(item.get("name_en") or "").strip().lower()
+    explicit_name_es = str(item.get("name_es") or "").strip().lower()
+    if explicit_name_en:
+        parsed["name_en"] = explicit_name_en
+    if explicit_name_es:
+        parsed["name_es"] = explicit_name_es
 
     explicit_quantity = item.get("quantity")
     if explicit_quantity is not None:
@@ -351,6 +391,11 @@ def _normalize_import_ingredient(item: Any) -> Optional[dict[str, Any]]:
         parsed["notes"] = f"{parsed['notes']}; {explicit_notes}"
     elif explicit_notes:
         parsed["notes"] = explicit_notes
+
+    if not parsed.get("name_en"):
+        parsed["name_en"] = parsed.get("name")
+    if not parsed.get("name_es"):
+        parsed["name_es"] = parsed.get("name_en") or parsed.get("name")
 
     return parsed if parsed.get("name") else None
 
@@ -804,6 +849,24 @@ def create_app(config: Config | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Ingredient not found")
         return updated.to_dict()
 
+    @app.put("/api/ingredients/{ingredient_id}/names")
+    async def update_ingredient_names(
+        request: Request, ingredient_id: int, data: IngredientNamesPayload
+    ) -> dict[str, Any]:
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        try:
+            updated = db.update_ingredient_names(
+                ingredient_id=ingredient_id,
+                name_en=data.name_en,
+                name_es=data.name_es,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        if updated is None:
+            raise HTTPException(status_code=404, detail="Ingredient not found")
+        return updated.to_dict()
+
     @app.delete("/api/ingredients/{ingredient_id}")
     async def delete_ingredient(request: Request, ingredient_id: int) -> dict[str, Any]:
         user = _require_user(request)
@@ -903,7 +966,8 @@ def create_app(config: Config | None = None) -> FastAPI:
             prompt = (
                 "Extract the recipe from this URL and return only valid JSON with keys: "
                 "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
-                "ingredients (array of objects with name, quantity, unit, category, notes). "
+                "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
+                "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
                 f"URL: {source_url}"
             )
             return _run_claude_recipe_import(prompt, allow_web_fetch=True)
@@ -915,7 +979,8 @@ def create_app(config: Config | None = None) -> FastAPI:
         prompt = (
             "Extract the recipe from this raw recipe text and return only valid JSON with keys: "
             "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
-            "ingredients (array of objects with name, quantity, unit, category, notes). "
+            "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
+            "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
             "If source_url is unknown, use null.\n"
             "RECIPE TEXT:\n"
             f"{source_text}"

@@ -7,11 +7,14 @@ The app now runs in **multi-user mode** with exactly two users, each isolated to
 ## Features
 
 - Recipe CRUD with normalized shared ingredients
+- Bilingual ingredient names (`name_en` / `name_es`) with migration from legacy `name`
 - Optional recipe category field (editable in add/edit form)
 - Cooking Mode recipe detail with clear steps and ingredient panel
 - Recipe list grouped by category with collapsible sections and live search
 - Shopping list generation from selected recipes
+- Shopping list and checked-item persistence per user (browser local storage)
 - Recipe suggestions based on selected ingredients
+- Ingredient management table (default selection, bilingual rename, usage visibility, delete, merge + undo)
 - Ingredient and stats endpoints for UI dashboards
 
 ## Run
@@ -78,12 +81,19 @@ PY
 
 - `GET /api/ingredients`
 - `GET /api/ingredients/{id}/recipes`
+- `PUT /api/ingredients/{id}/names`
+- `POST /api/ingredients/{id}/default`
+- `POST /api/ingredients/merge-preview`
+- `POST /api/ingredients/merge`
+- `POST /api/ingredients/merge/{merge_event_id}/undo`
+- `GET /api/ingredients/merge-history`
 - `GET /api/stats`
 
 ### Shopping and Suggestions
 
 - `POST /api/shopping-list`
 - `POST /api/suggestions`
+- `POST /api/recipes/import-preview`
 
 ### Health
 
@@ -97,10 +107,28 @@ PY
 
 ## Ingredient Data Model
 
-- Ingredients are independent records (`name`, optional `category`).
+- Ingredients are independent records (`name_en`, `name_es`, legacy `name`, optional `category`).
 - `quantity`, `unit`, and `notes` are recipe-specific values stored on the recipe-ingredient link.
 - The same ingredient can therefore have different quantities/units/notes in different recipes.
 - Current rule: one ingredient can appear only once per recipe (`UNIQUE(recipe_id, ingredient_id)`).
+
+## Usage
+
+### Manage ingredient names (EN/ES)
+
+1. Open `Recipe Finder`.
+2. Click `Manage Ingredients`.
+3. Edit `English` and/or `Spanish` in a row.
+4. Click `Save`.
+
+Changes apply globally in recipe detail and shopping list displays.
+
+### Switch ingredient language
+
+- Recipe detail: use `EN` / `ES` toggle in the Ingredients panel.
+- Shopping list: use `EN` / `ES` toggle in the Shopping header.
+
+Language preference is stored per logged-in user in browser local storage.
 
 ## Test
 

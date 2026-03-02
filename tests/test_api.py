@@ -294,6 +294,8 @@ def test_ingredient_endpoints_and_404(client):
     body = ingredients.json()
     assert len(body) >= 1
     assert "default_available" in body[0]
+    assert "name_en" in body[0]
+    assert "name_es" in body[0]
 
     ingredient_id = body[0]["id"]
     recipes = client.get(f"/api/ingredients/{ingredient_id}/recipes")
@@ -313,6 +315,14 @@ def test_ingredient_endpoints_and_404(client):
     )
     assert preference_post_base.status_code == 200
     assert preference_post_base.json()["default_available"] is False
+
+    rename = client.put(
+        f"/api/ingredients/{ingredient_id}/names",
+        json={"name_en": "new english name", "name_es": "nuevo nombre"},
+    )
+    assert rename.status_code == 200
+    assert rename.json()["name_en"] == "new english name"
+    assert rename.json()["name_es"] == "nuevo nombre"
 
     missing = client.get("/api/ingredients/999999/recipes")
     assert missing.status_code == 404
@@ -468,11 +478,15 @@ def test_normalize_import_recipe_parses_ranges_and_notes_consistently():
     flour = normalized["ingredients"][1]
 
     assert salt["name"] == "salt"
+    assert salt["name_en"] == "salt"
+    assert salt["name_es"] == "salt"
     assert salt["quantity"] == 1.0
     assert salt["unit"] == "teaspoon"
     assert salt["notes"] == "quantity range: 1-2; adjust to taste"
 
     assert flour["name"] == "flour"
+    assert flour["name_en"] == "flour"
+    assert flour["name_es"] == "flour"
     assert flour["quantity"] == 1.5
     assert flour["unit"] == "cup"
     assert flour["notes"] == "sifted"

@@ -722,6 +722,10 @@ label {
     width: 86px;
 }
 
+.ingredient-col-save {
+    width: 92px;
+}
+
 .ingredient-delete-btn {
     border-radius: 999px;
     width: 32px;
@@ -731,6 +735,18 @@ label {
     font-size: 1.05rem;
     color: var(--danger);
     border-color: #d8b3ad;
+}
+
+.ingredient-save-btn {
+    border-radius: 10px;
+    padding: 0.34rem 0.62rem;
+    font-size: 0.8rem;
+}
+
+.ingredient-table input[type="text"] {
+    min-width: 180px;
+    font-size: 0.9rem;
+    padding: 0.45rem 0.55rem;
 }
 
 .ingredient-usage-scroll {
@@ -744,6 +760,30 @@ label {
 
 .ingredient-empty {
     padding: 0.75rem 0.5rem;
+}
+
+.ingredient-language-toggle {
+    display: inline-flex;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 0.12rem;
+    background: #fff;
+    gap: 0.1rem;
+}
+
+.lang-toggle-btn {
+    border: 1px solid transparent;
+    background: #fff;
+    border-radius: 999px;
+    padding: 0.28rem 0.62rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    min-width: 48px;
+}
+
+.lang-toggle-btn.active {
+    border-color: var(--primary);
+    background: var(--primary-soft);
 }
 
 .selected-filter-list {

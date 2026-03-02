@@ -16,13 +16,58 @@ const state = {
 
 const SHOPPING_SELECTION_STORAGE_KEY_PREFIX = 'shopping_recipe_ids::';
 const SHOPPING_CHECKS_STORAGE_KEY_PREFIX = 'shopping_checks::';
+const INGREDIENT_LANGUAGE_STORAGE_KEY_PREFIX = 'ingredient_language::';
+
+function getIngredientLanguageStorageKey() {
+    const username = state.authUser?.username;
+    if (!username) {
+        return null;
+    }
+    return `${INGREDIENT_LANGUAGE_STORAGE_KEY_PREFIX}${username}`;
+}
+
+function loadIngredientLanguagePreference() {
+    const key = getIngredientLanguageStorageKey();
+    if (!key) {
+        return 'en';
+    }
+    try {
+        const saved = String(window.localStorage.getItem(key) || '').toLowerCase();
+        return saved === 'es' ? 'es' : 'en';
+    } catch (_) {
+        return 'en';
+    }
+}
+
+function saveIngredientLanguagePreference(language) {
+    const key = getIngredientLanguageStorageKey();
+    if (!key) {
+        return;
+    }
+    try {
+        window.localStorage.setItem(key, language === 'es' ? 'es' : 'en');
+    } catch (_) {
+        // Ignore storage failures.
+    }
+}
+
+function getIngredientDisplayName(ingredient, language = 'en') {
+    const fallback = String(ingredient?.name || '').trim();
+    const english = String(ingredient?.name_en || fallback).trim();
+    const spanish = String(ingredient?.name_es || english || fallback).trim();
+    return language === 'es' ? (spanish || english || fallback) : (english || spanish || fallback);
+}
 
 function formatQuantityUnit(quantity, unit) {
+    const numericQuantity = Number(quantity);
+    if (Number.isNaN(numericQuantity) || numericQuantity <= 0) {
+        return '';
+    }
     const normalizedUnit = String(unit || '').trim().toLowerCase();
     if (!normalizedUnit || normalizedUnit === 'nonunit') {
-        return `${quantity}`;
+        return `${numericQuantity}`;
     }
-    return `${quantity} ${unit}`;
+    return `${numericQuantity} ${unit}`;
 }
 
 function getShoppingSelectionStorageKey() {
@@ -237,6 +282,13 @@ const api = {
     },
     deleteIngredient(id) {
         return this.request(`/api/ingredients/${id}`, { method: 'DELETE' });
+    },
+    updateIngredientNames(id, payload) {
+        return this.request(`/api/ingredients/${id}/names`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
     },
     getIngredientMergePreview(payload) {
         return this.request('/api/ingredients/merge-preview', {
@@ -520,21 +572,49 @@ async function renderDetailView(recipeId) {
     const focusPanelEl = document.getElementById('focus-mode-panel');
     const focusCounterEl = document.getElementById('focus-step-counter');
     const focusTextEl = document.getElementById('focus-step-text');
+    const langEnBtn = document.getElementById('ingredient-lang-en');
+    const langEsBtn = document.getElementById('ingredient-lang-es');
 
     try {
         const recipe = await api.getRecipe(recipeId);
         const steps = getRecipeSteps(recipe);
+        let ingredientLanguage = loadIngredientLanguagePreference();
         state.focusStepIndex = 0;
         titleEl.textContent = recipe.title;
         const categoryLabel = getRecipeCategoryLabel(recipe);
         metaEl.textContent = `Category: ${categoryLabel} | Servings: ${recipe.servings ?? '-'} | Prep: ${recipe.prep_time ?? '-'} min | Cook: ${recipe.cook_time ?? '-'} min`;
 
-        ingredientsEl.innerHTML = '';
-        recipe.ingredients.forEach((item) => {
-            const li = document.createElement('li');
-            const name = item.ingredient?.name || `Ingredient #${item.ingredient_id}`;
-            li.textContent = `${formatQuantityUnit(item.quantity, item.unit)} ${name}${item.notes ? ` (${item.notes})` : ''}`;
-            ingredientsEl.appendChild(li);
+        function renderIngredientLanguageToggle() {
+            langEnBtn.classList.toggle('active', ingredientLanguage === 'en');
+            langEsBtn.classList.toggle('active', ingredientLanguage === 'es');
+        }
+
+        function renderIngredientsList() {
+            ingredientsEl.innerHTML = '';
+            recipe.ingredients.forEach((item) => {
+                const li = document.createElement('li');
+                const ingredientData = item.ingredient || {};
+                const name = getIngredientDisplayName(ingredientData, ingredientLanguage) || `Ingredient #${item.ingredient_id}`;
+                const qtyUnit = formatQuantityUnit(item.quantity, item.unit);
+                const prefix = qtyUnit ? `${qtyUnit} ` : '';
+                li.textContent = `${prefix}${name}${item.notes ? ` (${item.notes})` : ''}`;
+                ingredientsEl.appendChild(li);
+            });
+        }
+        renderIngredientLanguageToggle();
+        renderIngredientsList();
+
+        langEnBtn.addEventListener('click', () => {
+            ingredientLanguage = 'en';
+            saveIngredientLanguagePreference(ingredientLanguage);
+            renderIngredientLanguageToggle();
+            renderIngredientsList();
+        });
+        langEsBtn.addEventListener('click', () => {
+            ingredientLanguage = 'es';
+            saveIngredientLanguagePreference(ingredientLanguage);
+            renderIngredientLanguageToggle();
+            renderIngredientsList();
         });
 
         stepsEl.innerHTML = '';
@@ -644,7 +724,7 @@ function ingredientRow(initial = {}) {
     row.className = 'row gap responsive ingredient-row';
     row.innerHTML = `
         <input class="i-name" placeholder="name" value="${escapeHtml(initial.name || '')}" required>
-        <input class="i-qty" type="number" min="0" step="0.01" placeholder="qty" value="${initial.quantity ?? ''}" required>
+        <input class="i-qty" type="number" min="0" step="0.01" placeholder="qty (optional)" value="${initial.quantity ?? ''}">
         <input class="i-unit" placeholder="unit (optional)" value="${escapeHtml(displayUnit)}">
         <input class="i-category" placeholder="category" value="${escapeHtml(initial.category || '')}">
         <input class="i-notes" placeholder="notes" value="${escapeHtml(initial.notes || '')}">
@@ -669,13 +749,16 @@ function collectFormPayload() {
     const ingredients = [];
     document.querySelectorAll('.ingredient-row').forEach((row) => {
         const name = row.querySelector('.i-name').value.trim();
-        const quantity = Number(row.querySelector('.i-qty').value);
+        const quantityRaw = row.querySelector('.i-qty').value.trim();
+        const quantity = quantityRaw === '' ? 0 : Number(quantityRaw);
         const unit = row.querySelector('.i-unit').value.trim() || 'nonunit';
         if (!name || Number.isNaN(quantity)) {
             return;
         }
         ingredients.push({
             name,
+            name_en: name,
+            name_es: name,
             quantity,
             unit,
             category: row.querySelector('.i-category').value.trim() || null,
@@ -830,7 +913,7 @@ async function renderFormView(recipeId = null) {
             steps.forEach((step) => stepRowsEl.appendChild(stepRow(step)));
             if (recipe.ingredients.length) {
                 recipe.ingredients.forEach((item) => rowsEl.appendChild(ingredientRow({
-                    name: item.ingredient?.name || '',
+                    name: item.ingredient?.name_en || item.ingredient?.name || '',
                     quantity: item.quantity,
                     unit: item.unit,
                     category: item.ingredient?.category || '',
@@ -883,12 +966,38 @@ async function renderShoppingView() {
     const resultsEl = document.getElementById('shopping-recipe-results');
     const selectedEl = document.getElementById('shopping-selected-recipes');
     const selectionMetaEl = document.getElementById('shopping-selection-meta');
+    const langEnBtn = document.getElementById('shopping-lang-en');
+    const langEsBtn = document.getElementById('shopping-lang-es');
 
     let availableRecipes = [];
     let currentSearchResults = [];
     let highlightedSearchIndex = -1;
+    let ingredientLanguage = loadIngredientLanguagePreference();
+    let latestShoppingData = null;
     state.shoppingRecipeIds = loadShoppingSelectionFromStorage();
     state.shoppingChecks = loadShoppingChecksFromStorage();
+
+    function renderIngredientLanguageToggle() {
+        langEnBtn.classList.toggle('active', ingredientLanguage === 'en');
+        langEsBtn.classList.toggle('active', ingredientLanguage === 'es');
+    }
+
+    langEnBtn.addEventListener('click', () => {
+        ingredientLanguage = 'en';
+        saveIngredientLanguagePreference(ingredientLanguage);
+        renderIngredientLanguageToggle();
+        if (latestShoppingData) {
+            renderShoppingCategories(latestShoppingData);
+        }
+    });
+    langEsBtn.addEventListener('click', () => {
+        ingredientLanguage = 'es';
+        saveIngredientLanguagePreference(ingredientLanguage);
+        renderIngredientLanguageToggle();
+        if (latestShoppingData) {
+            renderShoppingCategories(latestShoppingData);
+        }
+    });
 
     function renderSelectionMeta() {
         const count = state.shoppingRecipeIds.size;
@@ -983,61 +1092,69 @@ async function renderShoppingView() {
         });
     }
 
+    function renderShoppingCategories(data) {
+        categoriesEl.innerHTML = '';
+        const categories = Object.keys(data.by_category || {});
+        if (!categories.length) {
+            setMessage(messageEl, 'No shopping items for selected recipes.');
+            return;
+        }
+        const visibleIds = new Set();
+        categories.forEach((category) => {
+            const section = document.createElement('section');
+            section.className = 'card';
+            section.innerHTML = `<h3>${escapeHtml(category)}</h3>`;
+            const list = document.createElement('ul');
+            data.by_category[category].forEach((item) => {
+                const id = `${item.ingredient_id}-${item.unit}`;
+                visibleIds.add(id);
+                const qtyUnit = formatQuantityUnit(item.total_quantity, item.unit);
+                const prefix = qtyUnit ? `${escapeHtml(qtyUnit)} ` : '';
+                const displayName = getIngredientDisplayName(item, ingredientLanguage);
+                const li = document.createElement('li');
+                li.innerHTML = `
+                    <label class="shopping-item-label">
+                        <input type="checkbox" data-shopping-id="${id}" ${state.shoppingChecks.has(id) ? 'checked' : ''}>
+                        <span class="shopping-item-text">${prefix}${escapeHtml(displayName)} (${escapeHtml(item.recipes.join(', '))})</span>
+                    </label>
+                `;
+                list.appendChild(li);
+            });
+            section.appendChild(list);
+            categoriesEl.appendChild(section);
+        });
+        state.shoppingChecks = new Set(
+            Array.from(state.shoppingChecks).filter((id) => visibleIds.has(id))
+        );
+        saveShoppingChecksToStorage();
+
+        categoriesEl.querySelectorAll('[data-shopping-id]').forEach((input) => {
+            input.addEventListener('change', () => {
+                const id = input.dataset.shoppingId;
+                if (input.checked) {
+                    state.shoppingChecks.add(id);
+                } else {
+                    state.shoppingChecks.delete(id);
+                }
+                saveShoppingChecksToStorage();
+            });
+        });
+    }
+
     async function loadList() {
         const recipe_ids = Array.from(state.shoppingRecipeIds);
         if (!recipe_ids.length) {
             categoriesEl.innerHTML = '';
+            latestShoppingData = null;
             setMessage(messageEl, 'Select recipes above to generate a shopping list.', true);
             return;
         }
 
         try {
             const data = await api.getShoppingList(recipe_ids);
-            categoriesEl.innerHTML = '';
-            const categories = Object.keys(data.by_category || {});
-            if (!categories.length) {
-                setMessage(messageEl, 'No shopping items for selected recipes.');
-                return;
-            }
+            latestShoppingData = data;
             setMessage(messageEl, `Generated ${data.items.length} item(s) from ${recipe_ids.length} recipe(s).`);
-            const visibleIds = new Set();
-            categories.forEach((category) => {
-                const section = document.createElement('section');
-                section.className = 'card';
-                section.innerHTML = `<h3>${escapeHtml(category)}</h3>`;
-                const list = document.createElement('ul');
-                data.by_category[category].forEach((item) => {
-                    const id = `${item.ingredient_id}-${item.unit}`;
-                    visibleIds.add(id);
-                    const li = document.createElement('li');
-                    li.innerHTML = `
-                        <label class="shopping-item-label">
-                            <input type="checkbox" data-shopping-id="${id}" ${state.shoppingChecks.has(id) ? 'checked' : ''}>
-                            <span class="shopping-item-text">${escapeHtml(formatQuantityUnit(item.total_quantity, item.unit))} ${escapeHtml(item.name)} (${escapeHtml(item.recipes.join(', '))})</span>
-                        </label>
-                    `;
-                    list.appendChild(li);
-                });
-                section.appendChild(list);
-                categoriesEl.appendChild(section);
-            });
-            // Keep only checks that still exist in the currently rendered list.
-            state.shoppingChecks = new Set(
-                Array.from(state.shoppingChecks).filter((id) => visibleIds.has(id))
-            );
-            saveShoppingChecksToStorage();
-
-            categoriesEl.querySelectorAll('[data-shopping-id]').forEach((input) => {
-                input.addEventListener('change', () => {
-                    const id = input.dataset.shoppingId;
-                    if (input.checked) {
-                        state.shoppingChecks.add(id);
-                    } else {
-                        state.shoppingChecks.delete(id);
-                    }
-                    saveShoppingChecksToStorage();
-                });
-            });
+            renderShoppingCategories(data);
         } catch (err) {
             setMessage(messageEl, `Shopping list failed: ${err.message}`, true);
         }
@@ -1046,6 +1163,7 @@ async function renderShoppingView() {
     document.getElementById('generate-shopping-list').addEventListener('click', loadList);
     document.getElementById('clear-shopping-recipes').addEventListener('click', () => {
         state.shoppingRecipeIds.clear();
+        latestShoppingData = null;
         clearShoppingSelectionFromStorage();
         renderSelectionMeta();
         renderSelectedFilters();
@@ -1110,6 +1228,7 @@ async function renderShoppingView() {
 
     try {
         availableRecipes = await api.getRecipes();
+        renderIngredientLanguageToggle();
         const validRecipeIds = new Set(availableRecipes.map((recipe) => recipe.id));
         state.shoppingRecipeIds = new Set(
             Array.from(state.shoppingRecipeIds).filter((recipeId) => validRecipeIds.has(recipeId)).slice(0, 10)
@@ -1264,10 +1383,14 @@ async function renderIngredientsView() {
 
     function renderList(search = '') {
         const term = search.trim().toLowerCase();
-        const filtered = ingredients.filter((ingredient) => ingredient.name.toLowerCase().includes(term));
+        const filtered = ingredients.filter((ingredient) => {
+            const english = String(ingredient.name_en || ingredient.name || '').toLowerCase();
+            const spanish = String(ingredient.name_es || ingredient.name_en || ingredient.name || '').toLowerCase();
+            return english.includes(term) || spanish.includes(term);
+        });
         listEl.innerHTML = '';
         if (!filtered.length) {
-            listEl.innerHTML = '<tr><td colspan="4" class="muted ingredient-empty">No ingredients found.</td></tr>';
+            listEl.innerHTML = '<tr><td colspan="6" class="muted ingredient-empty">No ingredients found.</td></tr>';
             return;
         }
         filtered.forEach((ingredient) => {
@@ -1275,19 +1398,59 @@ async function renderIngredientsView() {
             const checked = ingredient.default_available ? 'checked' : '';
             const recipes = recipeUsageByIngredientId.get(ingredient.id) || [];
             const recipesLabel = recipes.length ? recipes.join(' • ') : 'Not used in any recipe';
+            const englishName = ingredient.name_en || ingredient.name || '';
+            const spanishName = ingredient.name_es || ingredient.name_en || ingredient.name || '';
             row.innerHTML = `
                 <td class="ingredient-col-default">
-                    <input type="checkbox" data-ingredient-default-id="${ingredient.id}" ${checked} aria-label="Default ${escapeHtml(ingredient.name)}">
+                    <input type="checkbox" data-ingredient-default-id="${ingredient.id}" ${checked} aria-label="Default ${escapeHtml(englishName)}">
                 </td>
-                <td class="ingredient-col-name">${escapeHtml(ingredient.name)}</td>
+                <td class="ingredient-col-name">
+                    <input type="text" data-ingredient-name-en-id="${ingredient.id}" value="${escapeHtml(englishName)}" aria-label="English name">
+                </td>
+                <td class="ingredient-col-name">
+                    <input type="text" data-ingredient-name-es-id="${ingredient.id}" value="${escapeHtml(spanishName)}" aria-label="Spanish name">
+                </td>
+                <td class="ingredient-col-save">
+                    <button type="button" class="ingredient-save-btn" data-save-ingredient-id="${ingredient.id}">Save</button>
+                </td>
                 <td class="ingredient-col-delete">
-                    <button type="button" class="ingredient-delete-btn" data-delete-ingredient-id="${ingredient.id}" aria-label="Delete ${escapeHtml(ingredient.name)}">×</button>
+                    <button type="button" class="ingredient-delete-btn" data-delete-ingredient-id="${ingredient.id}" aria-label="Delete ${escapeHtml(englishName)}">×</button>
                 </td>
                 <td>
                     <div class="ingredient-usage-scroll" title="${escapeHtml(recipesLabel)}">${escapeHtml(recipesLabel)}</div>
                 </td>
             `;
             listEl.appendChild(row);
+        });
+        listEl.querySelectorAll('[data-save-ingredient-id]').forEach((button) => {
+            button.addEventListener('click', async () => {
+                const ingredientId = Number(button.dataset.saveIngredientId);
+                const enInput = listEl.querySelector(`[data-ingredient-name-en-id="${ingredientId}"]`);
+                const esInput = listEl.querySelector(`[data-ingredient-name-es-id="${ingredientId}"]`);
+                const nameEn = String(enInput?.value || '').trim();
+                const nameEs = String(esInput?.value || '').trim();
+                if (!nameEn || !nameEs) {
+                    setMessage(messageEl, 'Both English and Spanish ingredient names are required.', true);
+                    return;
+                }
+                try {
+                    const updated = await api.updateIngredientNames(ingredientId, {
+                        name_en: nameEn,
+                        name_es: nameEs,
+                    });
+                    const target = ingredients.find((item) => item.id === ingredientId);
+                    if (target) {
+                        target.name = updated.name;
+                        target.name_en = updated.name_en;
+                        target.name_es = updated.name_es;
+                    }
+                    setMessage(messageEl, 'Ingredient names updated.');
+                    renderList(searchEl.value);
+                    renderMergeSelectors();
+                } catch (err) {
+                    setMessage(messageEl, `Failed to update ingredient names: ${err.message}`, true);
+                }
+            });
         });
         listEl.querySelectorAll('[data-ingredient-default-id]').forEach((input) => {
             input.addEventListener('change', async () => {
@@ -1311,7 +1474,7 @@ async function renderIngredientsView() {
             button.addEventListener('click', async () => {
                 const ingredientId = Number(button.dataset.deleteIngredientId);
                 const target = ingredients.find((item) => item.id === ingredientId);
-                const ingredientName = target?.name || 'this ingredient';
+                const ingredientName = getIngredientDisplayName(target || {}, 'en') || 'this ingredient';
                 const usageTitles = recipeUsageByIngredientId.get(ingredientId) || [];
                 const usageCount = usageTitles.length;
                 const warning = usageCount
@@ -1341,16 +1504,20 @@ async function renderIngredientsView() {
     function renderMergeSelectors() {
         mergePrimaryEl.innerHTML = '';
         mergeSecondaryEl.innerHTML = '';
-        const sorted = [...ingredients].sort((a, b) => a.name.localeCompare(b.name));
+        const sorted = [...ingredients].sort((a, b) => {
+            const left = getIngredientDisplayName(a, 'en');
+            const right = getIngredientDisplayName(b, 'en');
+            return left.localeCompare(right);
+        });
         sorted.forEach((ingredient) => {
             const optionPrimary = document.createElement('option');
             optionPrimary.value = String(ingredient.id);
-            optionPrimary.textContent = ingredient.name;
+            optionPrimary.textContent = getIngredientDisplayName(ingredient, 'en');
             mergePrimaryEl.appendChild(optionPrimary);
 
             const optionSecondary = document.createElement('option');
             optionSecondary.value = String(ingredient.id);
-            optionSecondary.textContent = ingredient.name;
+            optionSecondary.textContent = getIngredientDisplayName(ingredient, 'en');
             mergeSecondaryEl.appendChild(optionSecondary);
         });
         if (sorted.length >= 2) {

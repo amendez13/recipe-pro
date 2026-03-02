@@ -1,24 +1,32 @@
-# Deployment Notes
+# Deployment Architecture, Implementation, and Usage
 
 Recipe Pro is deployed on the same Hetzner VPS where development is done, reachable over the Tailscale network.
 
 The service is multi-user and expects two configured users with isolated databases.
 
-## Service
+## Architecture
 
 Systemd unit template: `ansible/templates/recipe-pro.service`
 
 Key settings:
 
 - Working directory: `/home/admin/projects/recipe-pro`
-- Start command: `/home/admin/projects/recipe-pro/.venv/bin/uvicorn app.app:app --host 100.84.173.75 --port 8084`
+- Start command: `/home/admin/projects/recipe-pro/.venv/bin/uvicorn app.app:app --host 0.0.0.0 --port 8084`
 
-## Restart and Verify
+## Implementation Checklist
+
+1. Ensure code is present in `/home/admin/projects/recipe-pro`.
+2. Ensure virtualenv and dependencies are installed.
+3. Ensure active config has valid `web` and `auth` sections.
+4. Ensure both per-user databases exist and are writable by service user.
+5. Ensure `recipe-pro.service` is enabled.
+
+## Usage: Restart and Verify
 
 ```bash
 sudo systemctl restart recipe-pro
 sudo systemctl is-active recipe-pro
-curl -sSf http://100.84.173.75:8084/health
+curl -sSf http://127.0.0.1:8084/health
 ```
 
 ## Multi-user Config Requirements

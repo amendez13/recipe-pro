@@ -11,14 +11,20 @@ from typing import Optional
 class Ingredient:
     id: Optional[int] = None
     name: str = ""
+    name_en: str = ""
+    name_es: str = ""
     category: Optional[str] = None
     default_available: bool = False
 
     @classmethod
     def from_row(cls, row: dict) -> "Ingredient":
+        name_en = row.get("name_en") or row.get("name") or ""
+        name_es = row.get("name_es") or row.get("name") or name_en
         return cls(
             id=row.get("id"),
-            name=row.get("name", ""),
+            name=name_en,
+            name_en=name_en,
+            name_es=name_es,
             category=row.get("category"),
             default_available=bool(row.get("default_available", 0)),
         )
@@ -26,7 +32,9 @@ class Ingredient:
     def to_dict(self) -> dict:
         return {
             "id": self.id,
-            "name": self.name,
+            "name": self.name_en or self.name,
+            "name_en": self.name_en or self.name,
+            "name_es": self.name_es or self.name_en or self.name,
             "category": self.category,
             "default_available": self.default_available,
         }
@@ -46,11 +54,14 @@ class RecipeIngredient:
     def from_row(cls, row: dict) -> "RecipeIngredient":
         ingredient = None
         ingredient_id = row.get("ingredient_id")
-        ingredient_name = row.get("ingredient_name")
-        if ingredient_id is not None and ingredient_name is not None:
+        ingredient_name_en = row.get("ingredient_name_en") or row.get("ingredient_name")
+        ingredient_name_es = row.get("ingredient_name_es") or row.get("ingredient_name")
+        if ingredient_id is not None and ingredient_name_en is not None:
             ingredient = Ingredient(
                 id=ingredient_id,
-                name=ingredient_name,
+                name=ingredient_name_en,
+                name_en=ingredient_name_en,
+                name_es=ingredient_name_es or ingredient_name_en,
                 category=row.get("ingredient_category"),
             )
 

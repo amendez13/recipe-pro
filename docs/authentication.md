@@ -1,11 +1,11 @@
-# Authentication Architecture
+# Authentication Architecture, Implementation, and Usage
 
 ## Overview
 
 Recipe Pro uses cookie-based authentication with exactly two configured users.
 Each authenticated user is mapped to a dedicated SQLite database file for strict data isolation.
 
-## Components
+## Architecture Components
 
 - Config models: `app/config.py`
   - `AuthConfig` holds:
@@ -32,7 +32,9 @@ Each authenticated user is mapped to a dedicated SQLite database file for strict
   - Protected endpoints require a valid session user
   - DB access is resolved per authenticated username
 
-## Session Model
+## Implementation Details
+
+### Session Model
 
 - Session token is signed with HMAC-SHA256 using `auth.session_secret`.
 - Cookie fields:
@@ -42,7 +44,7 @@ Each authenticated user is mapped to a dedicated SQLite database file for strict
   - `Max-Age` from `auth.session_max_age_seconds` (or shorter when `remember=false`)
 - Logout clears the cookie.
 
-## Data Isolation
+### Data Isolation
 
 - User identity is resolved from the signed cookie on each request.
 - API handlers route to a `RecipeDatabase` instance keyed by that user’s `db_path`.
@@ -103,3 +105,9 @@ curl -b cookies.txt http://127.0.0.1:8084/api/auth/me
 - If authenticated, it loads the normal recipe views.
 - If unauthenticated (or any later 401), it redirects to login view.
 - Logout clears session and returns to login.
+
+## Operational Notes
+
+- The backend expects exactly two configured users.
+- `remember=true` uses `auth.session_max_age_seconds`; `remember=false` uses a shorter cookie lifetime.
+- If `auth.session_secure=true`, use HTTPS so cookies are accepted by browsers.

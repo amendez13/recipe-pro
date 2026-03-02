@@ -1,18 +1,21 @@
 # Recipe Pro Architecture
 
-## Stack
+## High-Level Architecture
 
-- Backend: FastAPI (`app/app.py`)
-- Data layer: SQLite (`app/database.py`)
-- Models: dataclasses (`app/models.py`)
-- Frontend: vanilla JS SPA (`app/templates/index.html`, `app/static/app.js`, `app/static/style.css`)
+- Backend: FastAPI application in `app/app.py`
+- Persistence: SQLite with migration logic in `app/database.py`
+- Data models: dataclasses in `app/models.py`
+- Frontend: vanilla JS SPA in `app/templates/index.html`, `app/static/app.js`, `app/static/style.css`
+- Runtime: systemd service (`recipe-pro`) on Hetzner VPS
 
-## Database Schema
+## Data Model Implementation
 
 ### `ingredients`
 
 - `id INTEGER PRIMARY KEY`
-- `name TEXT UNIQUE NOT NULL` (normalized lowercase + trimmed)
+- `name TEXT UNIQUE NOT NULL` (legacy compatibility alias; mirrors `name_en`)
+- `name_en TEXT UNIQUE` (normalized canonical key)
+- `name_es TEXT` (localized display name)
 - `category TEXT NULL`
 - `default_available INTEGER NOT NULL DEFAULT 0`
 
@@ -21,13 +24,20 @@
 - `id INTEGER PRIMARY KEY`
 - `title TEXT NOT NULL`
 - `category TEXT NULL`
-- `instructions TEXT NOT NULL`
-- `url TEXT NULL`
+- `instructions TEXT NOT NULL` (compatibility text blob)
+- `url TEXT NULL` (source URL for imported/manual recipes)
 - `servings INTEGER NULL`
 - `prep_time INTEGER NULL`
 - `cook_time INTEGER NULL`
 - `created_at TEXT NOT NULL`
 - `updated_at TEXT NOT NULL`
+
+### `recipe_steps`
+
+- `id INTEGER PRIMARY KEY`
+- `recipe_id INTEGER NOT NULL` (`ON DELETE CASCADE`)
+- `step_order INTEGER NOT NULL`
+- `instruction TEXT NOT NULL`
 
 ### `recipe_ingredients`
 
@@ -39,36 +49,54 @@
 - `notes TEXT NULL`
 - `UNIQUE(recipe_id, ingredient_id)`
 
-## Ingredient Semantics
+## Domain Semantics
 
-- `ingredients` are independent entities (name/category/default flags).
-- `ingredients` do **not** own `quantity`, `unit`, or `notes`.
-- `quantity`, `unit`, and `notes` are attributes of the **recipe-to-ingredient link** in `recipe_ingredients`.
-- This means the same ingredient can have different quantities/units/notes across different recipes.
-- Current constraint: `UNIQUE(recipe_id, ingredient_id)` allows only one row per ingredient per recipe.
+- Ingredients are standalone entities and are shared across recipes.
+- Quantity/unit/notes are recipe-specific attributes on `recipe_ingredients`.
+- A single ingredient can vary by quantity/unit/notes across recipes.
+- One ingredient may appear once per recipe because of `UNIQUE(recipe_id, ingredient_id)`.
 
-## API Boundaries
+## API Implementation Boundaries
 
-- Recipe CRUD endpoints handle full recipe payloads including ingredients.
-- Ingredient endpoints are read-only; ingredient records are created/updated via recipe writes.
-- Shopping list endpoint computes consolidated items on-demand (not persisted).
-- Suggestions endpoint computes match percentage and matched/missing ingredient names on-demand.
-- Auth endpoints manage session cookies (`/api/auth/login`, `/api/auth/logout`, `/api/auth/me`).
+- Auth/session:
+  - `POST /api/auth/login`
+  - `POST /api/auth/logout`
+  - `GET /api/auth/me`
+- Recipes:
+  - `GET/POST /api/recipes`
+  - `GET/PUT/DELETE /api/recipes/{id}`
+  - `POST /api/recipes/import-preview`
+- Ingredients:
+  - `GET /api/ingredients`
+  - `GET /api/ingredients/{id}/recipes`
+  - `POST /api/ingredients/{id}/default`
+  - `PUT /api/ingredients/{id}/names`
+  - `DELETE /api/ingredients/{id}`
+  - `POST /api/ingredients/merge-preview`
+  - `POST /api/ingredients/merge`
+  - `POST /api/ingredients/merge/{merge_event_id}/undo`
+  - `GET /api/ingredients/merge-history`
+- Derived features:
+  - `POST /api/shopping-list`
+  - `POST /api/suggestions`
 
-## Frontend Views
+## Frontend Implementation
 
-- Recipe list grouped by recipe category with collapsible category sections + title search
-- Recipe detail cooking mode
-- Add/edit recipe form with category field + dynamic ingredient rows
-- Shopping list view grouped by category
-- Recipe finder view using ingredient selection + suggestions
-- Login view + authenticated app shell
+- Login-gated SPA shell with route-based view rendering.
+- Recipe list grouped by category with collapsible sections and search.
+- Recipe detail with step list and focus mode (step-by-step navigation).
+- Shopping list with recipe picker, generation, and per-user local persistence.
+- Recipe finder with ingredient selection and dynamic suggestions.
+- Ingredients management table for defaults, bilingual naming, merge, and cleanup.
+- Ingredient language toggle (EN/ES) in recipe detail and shopping list.
 
-## Authentication and Isolation
+## Multi-User Isolation
 
-- Exactly 2 configured users are supported.
-- Each user maps to a dedicated SQLite database path.
-- All recipe-related APIs require an authenticated session.
-- Session failures (401) redirect the SPA to login.
+- Exactly two configured users.
+- Each user is mapped to a dedicated SQLite database file.
+- Request auth context determines which `RecipeDatabase` instance is used.
+- Session loss/401 transitions SPA back to login.
 
-See: `docs/authentication.md`
+See also:
+- `docs/authentication.md`
+- `docs/deployment.md`

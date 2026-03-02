@@ -39,6 +39,8 @@ class RecipeDatabase:
                 CREATE TABLE IF NOT EXISTS ingredients (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT UNIQUE NOT NULL,
+                    name_en TEXT,
+                    name_es TEXT,
                     category TEXT,
                     default_available INTEGER NOT NULL DEFAULT 0
                 )
@@ -51,6 +53,19 @@ class RecipeDatabase:
                 conn.execute(
                     "ALTER TABLE ingredients ADD COLUMN default_available INTEGER NOT NULL DEFAULT 0"
                 )
+            if "name_en" not in ingredient_columns:
+                conn.execute("ALTER TABLE ingredients ADD COLUMN name_en TEXT")
+            if "name_es" not in ingredient_columns:
+                conn.execute("ALTER TABLE ingredients ADD COLUMN name_es TEXT")
+            conn.execute("UPDATE ingredients SET name_en = COALESCE(NULLIF(TRIM(name_en), ''), name)")
+            conn.execute("UPDATE ingredients SET name_es = COALESCE(NULLIF(TRIM(name_es), ''), name_en, name)")
+            conn.execute("UPDATE ingredients SET name = COALESCE(NULLIF(TRIM(name), ''), name_en)")
+            conn.execute(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_ingredients_name_en_unique
+                ON ingredients(name_en)
+                """
+            )
             conn.execute(
                 """
                 CREATE TABLE IF NOT EXISTS recipes (
@@ -159,6 +174,17 @@ class RecipeDatabase:
     def _normalize_ingredient_name(name: str) -> str:
         return name.strip().lower()
 
+    def _normalize_ingredient_names(
+        self, name: Optional[str], name_en: Optional[str], name_es: Optional[str]
+    ) -> tuple[str, str]:
+        normalized_en = self._normalize_ingredient_name(name_en or name or "")
+        normalized_es = self._normalize_ingredient_name(name_es or name or name_en or "")
+        if not normalized_en and normalized_es:
+            normalized_en = normalized_es
+        if not normalized_es and normalized_en:
+            normalized_es = normalized_en
+        return normalized_en, normalized_es
+
     @staticmethod
     def _parse_steps_from_instructions(instructions: str) -> list[str]:
         return [line.strip() for line in instructions.splitlines() if line.strip()]
@@ -195,33 +221,49 @@ class RecipeDatabase:
 
     def get_or_create_ingredient(
         self,
-        name: str,
+        name: Optional[str],
+        name_en: Optional[str],
+        name_es: Optional[str],
         category: Optional[str],
         conn: Optional[sqlite3.Connection] = None,
     ) -> Ingredient:
-        normalized_name = self._normalize_ingredient_name(name)
-        if not normalized_name:
+        normalized_en, normalized_es = self._normalize_ingredient_names(name, name_en, name_es)
+        if not normalized_en:
             raise ValueError("Ingredient name cannot be empty")
 
         category_clean = category.strip() if isinstance(category, str) and category.strip() else None
 
         if conn is not None:
-            return self._get_or_create_ingredient_with_conn(conn, normalized_name, category_clean)
+            return self._get_or_create_ingredient_with_conn(
+                conn, normalized_en, normalized_es, category_clean
+            )
 
         with self._connect() as local_conn:
-            ingredient = self._get_or_create_ingredient_with_conn(local_conn, normalized_name, category_clean)
+            ingredient = self._get_or_create_ingredient_with_conn(
+                local_conn, normalized_en, normalized_es, category_clean
+            )
             local_conn.commit()
             return ingredient
 
     def _get_or_create_ingredient_with_conn(
-        self, conn: sqlite3.Connection, normalized_name: str, category: Optional[str]
+        self,
+        conn: sqlite3.Connection,
+        normalized_name_en: str,
+        normalized_name_es: str,
+        category: Optional[str],
     ) -> Ingredient:
         existing = conn.execute(
-            "SELECT id, name, category, default_available FROM ingredients WHERE name = ?",
-            (normalized_name,),
+            "SELECT id, name, name_en, name_es, category, default_available FROM ingredients WHERE name_en = ?",
+            (normalized_name_en,),
         ).fetchone()
         if existing:
             ingredient = Ingredient.from_row(dict(existing))
+            if normalized_name_es and ingredient.name_es != normalized_name_es:
+                conn.execute(
+                    "UPDATE ingredients SET name_es = ? WHERE id = ?",
+                    (normalized_name_es, ingredient.id),
+                )
+                ingredient.name_es = normalized_name_es
             if category and ingredient.category != category:
                 conn.execute(
                     "UPDATE ingredients SET category = ? WHERE id = ?",
@@ -231,22 +273,28 @@ class RecipeDatabase:
             return ingredient
 
         cursor = conn.execute(
-            "INSERT INTO ingredients (name, category) VALUES (?, ?)",
-            (normalized_name, category),
+            "INSERT INTO ingredients (name, name_en, name_es, category) VALUES (?, ?, ?, ?)",
+            (normalized_name_en, normalized_name_en, normalized_name_es, category),
         )
-        return Ingredient(id=cursor.lastrowid, name=normalized_name, category=category)
+        return Ingredient(
+            id=cursor.lastrowid,
+            name=normalized_name_en,
+            name_en=normalized_name_en,
+            name_es=normalized_name_es,
+            category=category,
+        )
 
     def get_all_ingredients(self) -> list[Ingredient]:
         with self._connect() as conn:
             rows = conn.execute(
-                "SELECT id, name, category, default_available FROM ingredients ORDER BY name ASC"
+                "SELECT id, name, name_en, name_es, category, default_available FROM ingredients ORDER BY name_en ASC"
             ).fetchall()
         return [Ingredient.from_row(dict(row)) for row in rows]
 
     def get_ingredient_by_id(self, ingredient_id: int) -> Optional[Ingredient]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, name, category, default_available FROM ingredients WHERE id = ?",
+                "SELECT id, name, name_en, name_es, category, default_available FROM ingredients WHERE id = ?",
                 (ingredient_id,),
             ).fetchone()
         return Ingredient.from_row(dict(row)) if row else None
@@ -268,7 +316,40 @@ class RecipeDatabase:
                 return None
             conn.commit()
             row = conn.execute(
-                "SELECT id, name, category, default_available FROM ingredients WHERE id = ?",
+                "SELECT id, name, name_en, name_es, category, default_available FROM ingredients WHERE id = ?",
+                (ingredient_id,),
+            ).fetchone()
+        return Ingredient.from_row(dict(row)) if row else None
+
+    def update_ingredient_names(
+        self, ingredient_id: int, name_en: Optional[str], name_es: Optional[str]
+    ) -> Optional[Ingredient]:
+        normalized_en, normalized_es = self._normalize_ingredient_names(None, name_en, name_es)
+        if not normalized_en:
+            raise ValueError("Ingredient English name cannot be empty")
+
+        with self._connect() as conn:
+            duplicate = conn.execute(
+                "SELECT id FROM ingredients WHERE name_en = ? AND id != ?",
+                (normalized_en, ingredient_id),
+            ).fetchone()
+            if duplicate:
+                raise ValueError("Another ingredient already uses this English name")
+
+            cursor = conn.execute(
+                """
+                UPDATE ingredients
+                SET name = ?, name_en = ?, name_es = ?
+                WHERE id = ?
+                """,
+                (normalized_en, normalized_en, normalized_es, ingredient_id),
+            )
+            if cursor.rowcount == 0:
+                conn.commit()
+                return None
+            conn.commit()
+            row = conn.execute(
+                "SELECT id, name, name_en, name_es, category, default_available FROM ingredients WHERE id = ?",
                 (ingredient_id,),
             ).fetchone()
         return Ingredient.from_row(dict(row)) if row else None
@@ -276,7 +357,7 @@ class RecipeDatabase:
     def delete_ingredient(self, ingredient_id: int) -> Optional[dict[str, Any]]:
         with self._connect() as conn:
             row = conn.execute(
-                "SELECT id, name FROM ingredients WHERE id = ?",
+                "SELECT id, name, name_en, name_es FROM ingredients WHERE id = ?",
                 (ingredient_id,),
             ).fetchone()
             if not row:
@@ -303,7 +384,9 @@ class RecipeDatabase:
             conn.commit()
             return {
                 "id": int(row["id"]),
-                "name": str(row["name"]),
+                "name": str(row["name_en"] or row["name"]),
+                "name_en": str(row["name_en"] or row["name"]),
+                "name_es": str(row["name_es"] or row["name_en"] or row["name"]),
                 "removed_recipe_links": usage_delete.rowcount,
                 "affected_recipe_count": len(recipe_ids),
                 "affected_recipe_ids": recipe_ids,
@@ -353,7 +436,9 @@ class RecipeDatabase:
 
             for item in ingredients_payload:
                 ingredient = self.get_or_create_ingredient(
-                    name=item.get("name", ""),
+                    name=item.get("name"),
+                    name_en=item.get("name_en"),
+                    name_es=item.get("name_es"),
                     category=item.get("category"),
                     conn=conn,
                 )
@@ -418,12 +503,13 @@ class RecipeDatabase:
                 ri.quantity,
                 ri.unit,
                 ri.notes,
-                i.name AS ingredient_name,
+                i.name_en AS ingredient_name_en,
+                i.name_es AS ingredient_name_es,
                 i.category AS ingredient_category
             FROM recipe_ingredients ri
             INNER JOIN ingredients i ON i.id = ri.ingredient_id
             WHERE ri.recipe_id = ?
-            ORDER BY i.name ASC
+            ORDER BY i.name_en ASC
             """,
             (recipe_id,),
         ).fetchall()
@@ -500,7 +586,9 @@ class RecipeDatabase:
 
             for item in ingredients_payload:
                 ingredient = self.get_or_create_ingredient(
-                    name=item.get("name", ""),
+                    name=item.get("name"),
+                    name_en=item.get("name_en"),
+                    name_es=item.get("name_es"),
                     category=item.get("category"),
                     conn=conn,
                 )
@@ -552,7 +640,8 @@ class RecipeDatabase:
                 f"""
                 SELECT
                     ri.ingredient_id,
-                    i.name,
+                    i.name_en,
+                    i.name_es,
                     i.category,
                     ri.quantity,
                     ri.unit,
@@ -561,7 +650,7 @@ class RecipeDatabase:
                 INNER JOIN ingredients i ON i.id = ri.ingredient_id
                 INNER JOIN recipes r ON r.id = ri.recipe_id
                 WHERE ri.recipe_id IN ({placeholders})
-                ORDER BY i.name ASC
+                ORDER BY i.name_en ASC
                 """,
                 tuple(recipe_ids),
             ).fetchall()
@@ -572,7 +661,9 @@ class RecipeDatabase:
             if key not in grouped:
                 grouped[key] = {
                     "ingredient_id": row["ingredient_id"],
-                    "name": row["name"],
+                    "name": row["name_en"],
+                    "name_en": row["name_en"],
+                    "name_es": row["name_es"] or row["name_en"],
                     "category": row["category"] or "other",
                     "total_quantity": 0.0,
                     "unit": row["unit"],
@@ -587,6 +678,8 @@ class RecipeDatabase:
                 {
                     "ingredient_id": value["ingredient_id"],
                     "name": value["name"],
+                    "name_en": value["name_en"],
+                    "name_es": value["name_es"],
                     "category": value["category"],
                     "total_quantity": value["total_quantity"],
                     "unit": value["unit"],
@@ -690,11 +783,11 @@ class RecipeDatabase:
 
         with self._connect() as conn:
             primary = conn.execute(
-                "SELECT id, name, category FROM ingredients WHERE id = ?",
+                "SELECT id, name_en, category FROM ingredients WHERE id = ?",
                 (primary_id,),
             ).fetchone()
             secondary = conn.execute(
-                "SELECT id, name, category FROM ingredients WHERE id = ?",
+                "SELECT id, name_en, category FROM ingredients WHERE id = ?",
                 (secondary_id,),
             ).fetchone()
             if not primary or not secondary:
@@ -723,8 +816,8 @@ class RecipeDatabase:
                 collision_titles = [row["title"] for row in collision_title_rows]
 
         return {
-            "primary": {"id": primary["id"], "name": primary["name"]},
-            "secondary": {"id": secondary["id"], "name": secondary["name"]},
+            "primary": {"id": primary["id"], "name": primary["name_en"]},
+            "secondary": {"id": secondary["id"], "name": secondary["name_en"]},
             "secondary_recipe_count": len(secondary_recipe_ids),
             "collision_recipe_count": len(collision_recipe_ids),
             "collision_recipe_titles": collision_titles,
@@ -746,11 +839,11 @@ class RecipeDatabase:
         with self._connect() as conn:
             conn.execute("BEGIN")
             primary = conn.execute(
-                "SELECT id, name FROM ingredients WHERE id = ?",
+                "SELECT id, name_en FROM ingredients WHERE id = ?",
                 (primary_id,),
             ).fetchone()
             secondary = conn.execute(
-                "SELECT id, name, category FROM ingredients WHERE id = ?",
+                "SELECT id, name_en, category FROM ingredients WHERE id = ?",
                 (secondary_id,),
             ).fetchone()
             if not primary or not secondary:
@@ -790,8 +883,8 @@ class RecipeDatabase:
                 (
                     primary["id"],
                     secondary["id"],
-                    primary["name"],
-                    secondary["name"],
+                    primary["name_en"],
+                    secondary["name_en"],
                     secondary["category"],
                     now,
                 ),
@@ -871,7 +964,7 @@ class RecipeDatabase:
 
             secondary_name = str(event["secondary_name_before"])
             existing = conn.execute(
-                "SELECT id FROM ingredients WHERE name = ?",
+                "SELECT id FROM ingredients WHERE name_en = ?",
                 (secondary_name,),
             ).fetchone()
             if existing:
@@ -879,8 +972,8 @@ class RecipeDatabase:
                 secondary_name = f"{secondary_name} (restored {suffix})"
 
             recreated_secondary_id = conn.execute(
-                "INSERT INTO ingredients (name, category) VALUES (?, ?)",
-                (secondary_name, event["secondary_category_before"]),
+                "INSERT INTO ingredients (name, name_en, name_es, category) VALUES (?, ?, ?, ?)",
+                (secondary_name, secondary_name, secondary_name, event["secondary_category_before"]),
             ).lastrowid
 
             event_rows = conn.execute(

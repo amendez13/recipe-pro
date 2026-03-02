@@ -64,7 +64,13 @@
             <h2 id="detail-title"></h2>
             <div class="row gap responsive">
                 <aside class="ingredients-panel">
-                    <h3>Ingredients</h3>
+                    <div class="row between gap align-center">
+                        <h3>Ingredients</h3>
+                        <div class="ingredient-language-toggle" role="group" aria-label="Ingredient language">
+                            <button type="button" id="ingredient-lang-en" class="lang-toggle-btn">EN</button>
+                            <button type="button" id="ingredient-lang-es" class="lang-toggle-btn">ES</button>
+                        </div>
+                    </div>
                     <ul id="detail-ingredients"></ul>
                     <section id="focus-mode-panel" class="focus-mode hidden">
                         <p id="focus-step-counter" class="muted"></p>
@@ -172,7 +178,13 @@
 
     <template id="shopping-view-template">
         <section class="panel">
-            <h2>Shopping List</h2>
+            <div class="row between gap align-center">
+                <h2>Shopping List</h2>
+                <div class="ingredient-language-toggle" role="group" aria-label="Shopping ingredient language">
+                    <button type="button" id="shopping-lang-en" class="lang-toggle-btn">EN</button>
+                    <button type="button" id="shopping-lang-es" class="lang-toggle-btn">ES</button>
+                </div>
+            </div>
             <label>
                 Find recipes
                 <input id="shopping-recipe-search" type="search" placeholder="Search recipes to include...">
@@ -220,7 +232,9 @@
                     <thead>
                         <tr>
                             <th>Default</th>
-                            <th>Ingredient</th>
+                            <th>English</th>
+                            <th>Spanish</th>
+                            <th>Save</th>
                             <th>Delete</th>
                             <th>Appears In Recipes</th>
                         </tr>

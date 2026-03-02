@@ -47,7 +47,9 @@ The app runs with two-user authentication and strict per-user data isolation (ea
 ```
 ingredients
 ├── id (PRIMARY KEY)
-├── name (UNIQUE, normalized lowercase)
+├── name (legacy compatibility alias, mirrors `name_en`)
+├── name_en (UNIQUE, normalized lowercase)
+├── name_es (normalized lowercase)
 ├── category (optional: produce, dairy, meat, pantry, spices, etc.)
 └── default_available (BOOLEAN/INTEGER, default ingredient selection for finder)
 
