@@ -767,3 +767,45 @@ def test_extract_recipe_from_url_json_ld(monkeypatch):
     assert recipe["cook_time"] == 60
     assert recipe["steps"] == ["Brown the meat.", "Layer and bake."]
     assert len(recipe["ingredients"]) == 2
+
+
+def test_extract_recipe_from_url_html_fallback(monkeypatch):
+    class DummyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"""
+            <html><head>
+            <title>Pasta e Ceci | Hogarmania</title>
+            </head><body>
+              <h2>Ingredientes</h2>
+              <ul>
+                <li>230g pimiento rojo asado</li>
+                <li>50ml aceite de oliva virgen extra</li>
+                <li>15ml miel</li>
+              </ul>
+              <h2>Elaboracion</h2>
+              <ol>
+                <li>Tritura todos los ingredientes.</li>
+                <li>Sirve con pan.</li>
+              </ol>
+            </body></html>
+            """
+
+    def fake_urlopen(*args, **kwargs):
+        return DummyResponse()
+
+    monkeypatch.setattr("app.app.urlopen", fake_urlopen)
+    recipe = _extract_recipe_from_url("https://example.com/pasta-e-ceci")
+    assert recipe is not None
+    assert "Pasta e Ceci" in recipe["title"]
+    assert len(recipe["steps"]) == 2
+    assert len(recipe["ingredients"]) == 3
+    first = recipe["ingredients"][0]
+    assert first["name"] == "pimiento rojo asado"
+    assert first["quantity"] == 230.0
+    assert first["unit"] == "g"

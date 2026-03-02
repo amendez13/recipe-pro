@@ -647,6 +647,89 @@ def _find_recipe_node(candidate: Any) -> Optional[dict[str, Any]]:
     return None
 
 
+def _strip_html_text(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value)
+    text = unescape(text)
+    return re.sub(r"\s+", " ", text).strip(" \n\t\r,.;:")
+
+
+def _extract_list_items_from_chunk(chunk: str) -> list[str]:
+    list_match = re.search(r"<(?:ul|ol)\b[^>]*>(.*?)</(?:ul|ol)>", chunk, flags=re.IGNORECASE | re.DOTALL)
+    if not list_match:
+        return []
+    inner = list_match.group(1)
+    raw_items = re.findall(r"<li\b[^>]*>(.*?)</li>", inner, flags=re.IGNORECASE | re.DOTALL)
+    items = [_strip_html_text(item) for item in raw_items]
+    return [item for item in items if item]
+
+
+def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str, Any]]:
+    lowered = body.lower()
+
+    title = ""
+    og_title_match = re.search(
+        r'<meta[^>]+property=["\']og:title["\'][^>]+content=["\']([^"\']+)["\']',
+        body,
+        flags=re.IGNORECASE,
+    )
+    if og_title_match:
+        title = _strip_html_text(og_title_match.group(1))
+    if not title:
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", body, flags=re.IGNORECASE | re.DOTALL)
+        if title_match:
+            title = _strip_html_text(title_match.group(1))
+
+    ingredient_markers = ["ingredientes", "ingredients"]
+    step_markers = [
+        "elaboración",
+        "elaboracion",
+        "preparación",
+        "preparacion",
+        "instrucciones",
+        "instructions",
+        "method",
+        "pasos",
+    ]
+
+    ingredients: list[str] = []
+    for marker in ingredient_markers:
+        idx = lowered.find(marker)
+        if idx == -1:
+            continue
+        chunk = body[idx : idx + 15000]
+        items = _extract_list_items_from_chunk(chunk)
+        if items:
+            ingredients = items
+            break
+
+    steps: list[str] = []
+    for marker in step_markers:
+        idx = lowered.find(marker)
+        if idx == -1:
+            continue
+        chunk = body[idx : idx + 20000]
+        items = _extract_list_items_from_chunk(chunk)
+        if items:
+            steps = items
+            break
+
+    if not ingredients or not steps:
+        return None
+
+    return _normalize_import_recipe(
+        {
+            "title": title or "Imported recipe",
+            "steps": steps,
+            "instructions": "\n".join(steps),
+            "servings": None,
+            "prep_time": None,
+            "cook_time": None,
+            "ingredients": ingredients,
+            "source_url": url,
+        }
+    )
+
+
 def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
     request = UrlRequest(
         url,
@@ -717,7 +800,7 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
             }
         )
 
-    return None
+    return _extract_recipe_from_html_fallback(url, body)
 
 
 def _extract_json_from_text(text: str) -> dict[str, Any]:
@@ -1387,7 +1470,21 @@ def create_app(config: Config | None = None) -> FastAPI:
                 "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
                 f"URL: {source_url}"
             )
-            result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
+            try:
+                result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
+            except HTTPException as exc:
+                if (
+                    exc.status_code in {422, 502, 504}
+                    and not runtime_health.get("ready_basic")
+                ):
+                    raise HTTPException(
+                        status_code=502,
+                        detail=(
+                            "Could not extract recipe from URL. Structured data extraction failed and "
+                            "AI fallback is not ready on server. Check /api/import/health."
+                        ),
+                    ) from exc
+                raise
             result["ingredients"] = _post_process_import_ingredients(
                 result.get("ingredients", []),
                 existing_names=existing_name_en,
