@@ -70,6 +70,7 @@ INGREDIENT_TRANSLATION_JSON_SCHEMA = {
 }
 
 _CLAUDE_TRANSLATION_AVAILABLE: Optional[bool] = None
+_INGREDIENT_TRANSLATION_CACHE: dict[str, tuple[str, str]] = {}
 
 
 class IngredientInput(BaseModel):
@@ -741,6 +742,9 @@ def _complete_bilingual_name_with_ai(name_en: Optional[str], name_es: Optional[s
     fallback = normalized_en or normalized_es
     if not fallback:
         return "", ""
+    cached = _INGREDIENT_TRANSLATION_CACHE.get(fallback)
+    if cached:
+        return cached
 
     global _CLAUDE_TRANSLATION_AVAILABLE
     if _CLAUDE_TRANSLATION_AVAILABLE is False:
@@ -778,13 +782,18 @@ def _complete_bilingual_name_with_ai(name_en: Optional[str], name_es: Optional[s
             capture_output=True,
             text=True,
             check=True,
-            timeout=2,
+            timeout=15,
         )
     except FileNotFoundError:
         _CLAUDE_TRANSLATION_AVAILABLE = False
+        _INGREDIENT_TRANSLATION_CACHE[fallback] = (fallback, fallback)
         return fallback, fallback
-    except (subprocess.TimeoutExpired, subprocess.CalledProcessError):
-        _CLAUDE_TRANSLATION_AVAILABLE = False
+    except subprocess.TimeoutExpired:
+        logger.warning("Ingredient translation timed out for '%s'", fallback)
+        _INGREDIENT_TRANSLATION_CACHE[fallback] = (fallback, fallback)
+        return fallback, fallback
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Ingredient translation failed for '%s': %s", fallback, (exc.stderr or "").strip())
         return fallback, fallback
 
     _CLAUDE_TRANSLATION_AVAILABLE = True
@@ -809,6 +818,7 @@ def _complete_bilingual_name_with_ai(name_en: Optional[str], name_es: Optional[s
         clean_en = fallback
     if re.search(r"\b(y|o)\b", clean_es):
         clean_es = fallback
+    _INGREDIENT_TRANSLATION_CACHE[fallback] = (clean_en, clean_es)
     return clean_en, clean_es
 
 
