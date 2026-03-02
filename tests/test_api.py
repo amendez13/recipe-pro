@@ -1,7 +1,14 @@
 from fastapi.testclient import TestClient
 import pytest
 
-from app.app import _extract_recipe_from_url, _normalize_import_recipe, create_app
+from app.app import (
+    _complete_bilingual_name_with_ai,
+    _enrich_ingredient_payload_names,
+    _extract_recipe_from_url,
+    _normalize_import_recipe,
+    _post_process_import_ingredients,
+    create_app,
+)
 from app.auth import hash_password
 from app.config import AuthConfig, Config, DatabaseConfig, UserConfig, WebConfig
 
@@ -379,6 +386,7 @@ def test_recipe_import_preview_endpoint(client, monkeypatch):
     def fake_run(*args, **kwargs):
         return DummyResult()
 
+    monkeypatch.setattr("app.app._extract_recipe_from_url", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("app.app.subprocess.run", fake_run)
 
     response = client.post(
@@ -436,6 +444,7 @@ def test_recipe_import_preview_parses_fenced_json(client, monkeypatch):
     def fake_run(*args, **kwargs):
         return DummyResult()
 
+    monkeypatch.setattr("app.app._extract_recipe_from_url", lambda *_args, **_kwargs: None)
     monkeypatch.setattr("app.app.subprocess.run", fake_run)
 
     response = client.post("/api/recipes/import-preview", json={"url": "https://example.com/fenced"})
@@ -490,6 +499,193 @@ def test_normalize_import_recipe_parses_ranges_and_notes_consistently():
     assert flour["quantity"] == 1.5
     assert flour["unit"] == "cup"
     assert flour["notes"] == "sifted"
+
+
+def test_post_process_import_ingredients_splits_compounds_and_cleans_units(monkeypatch):
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "0")
+    processed = _post_process_import_ingredients(
+        [
+            {
+                "name": "aleppo pepper or red pepper flakes",
+                "name_en": "aleppo pepper or red pepper flakes",
+                "name_es": "aleppo pepper or red pepper flakes",
+                "quantity": 1,
+                "unit": "teaspoon",
+                "category": "spices",
+                "notes": None,
+            },
+            {
+                "name": "garlic cloves",
+                "name_en": "garlic cloves",
+                "name_es": "garlic cloves",
+                "quantity": 2,
+                "unit": "nonunit",
+                "category": "produce",
+                "notes": None,
+            },
+            {
+                "name": "italian eggplants or small globe eggplants",
+                "name_en": "italian eggplants or small globe eggplants",
+                "name_es": "italian eggplants or small globe eggplants",
+                "quantity": 2,
+                "unit": "nonunit",
+                "category": "produce",
+                "notes": None,
+            },
+            {
+                "name": "extra virgin olive oil",
+                "name_en": "extra virgin olive oil",
+                "name_es": "extra virgin olive oil",
+                "quantity": 2,
+                "unit": "tablespoon",
+                "category": "pantry",
+                "notes": None,
+            },
+        ],
+        existing_names={"olive oil", "salt", "eggplant", "garlic"},
+    )
+
+    names = [item["name_en"] for item in processed]
+    assert "aleppo pepper" in names
+    assert "red pepper flakes" in names
+    assert "garlic" in names
+    assert "eggplant" in names
+    assert "olive oil" in names
+
+    garlic = next(item for item in processed if item["name_en"] == "garlic")
+    assert garlic["unit"] == "clove"
+
+
+def test_post_process_import_ingredients_translates_name_es_with_ai(monkeypatch):
+    class DummyResult:
+        stdout = """
+        {"type":"result","is_error":false,"result":"{\\"name_en\\":\\"eggplant\\",\\"name_es\\":\\"berenjena\\"}"}
+        """
+
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_AVAILABLE", None)
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1")
+    monkeypatch.setattr("app.app.os.access", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.app.shutil.which", lambda *_args, **_kwargs: "claude")
+    monkeypatch.setattr("app.app.subprocess.run", lambda *args, **kwargs: DummyResult())
+
+    processed = _post_process_import_ingredients(
+        [
+            {
+                "name": "eggplant",
+                "name_en": "eggplant",
+                "name_es": "eggplant",
+                "quantity": 1,
+                "unit": "piece",
+                "category": "produce",
+                "notes": None,
+            }
+        ],
+        existing_names={"eggplant"},
+    )
+
+    assert processed[0]["name_en"] == "eggplant"
+    assert processed[0]["name_es"] == "berenjena"
+
+
+def test_complete_bilingual_name_with_ai(monkeypatch):
+    class DummyResult:
+        stdout = """
+        {"type":"result","is_error":false,"result":"{\\"name_en\\":\\"cilantro\\",\\"name_es\\":\\"cilantro\\"}"}
+        """
+
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_AVAILABLE", None)
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1")
+    monkeypatch.setattr("app.app.os.access", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.app.shutil.which", lambda *_args, **_kwargs: "claude")
+    monkeypatch.setattr("app.app.subprocess.run", lambda *args, **kwargs: DummyResult())
+    translated_en, translated_es = _complete_bilingual_name_with_ai("cilantro", "cilantro")
+    assert translated_en == "cilantro"
+    assert translated_es == "cilantro"
+
+
+def test_enrich_ingredient_payload_names_uses_ai_completion(monkeypatch):
+    class DummyResult:
+        stdout = """
+        {"type":"result","is_error":false,"result":"{\\"name_en\\":\\"garlic\\",\\"name_es\\":\\"ajo\\"}"}
+        """
+
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_AVAILABLE", None)
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1")
+    monkeypatch.setattr("app.app.os.access", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.app.shutil.which", lambda *_args, **_kwargs: "claude")
+    monkeypatch.setattr("app.app.subprocess.run", lambda *args, **kwargs: DummyResult())
+    enriched = _enrich_ingredient_payload_names(
+        [
+            {
+                "name": "garlic",
+                "name_en": "garlic",
+                "name_es": "garlic",
+                "quantity": 2,
+                "unit": "clove",
+            }
+        ]
+    )
+    assert enriched[0]["name_en"] == "garlic"
+    assert enriched[0]["name_es"] == "ajo"
+
+
+def test_complete_bilingual_name_timeout_does_not_disable_future_attempts(monkeypatch):
+    class DummySuccess:
+        stdout = """
+        {"type":"result","is_error":false,"result":"{\\"name_en\\":\\"garlic\\",\\"name_es\\":\\"ajo\\"}"}
+        """
+
+    calls = {"count": 0}
+
+    def fake_run(*args, **kwargs):
+        import subprocess
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise subprocess.TimeoutExpired(cmd="claude", timeout=15)
+        return DummySuccess()
+
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_AVAILABLE", None)
+    monkeypatch.setattr("app.app._INGREDIENT_TRANSLATION_CACHE", {})
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL", 0.0)
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1")
+    monkeypatch.setattr("app.app.os.access", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.app.shutil.which", lambda *_args, **_kwargs: "claude")
+    monkeypatch.setattr("app.app.subprocess.run", fake_run)
+
+    first_en, first_es = _complete_bilingual_name_with_ai("garlic", "garlic")
+    assert first_en == "garlic"
+    assert first_es == "garlic"
+
+    # Simulate cooldown window elapsed so translation can retry.
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL", 0.0)
+    second_en, second_es = _complete_bilingual_name_with_ai("onion", "onion")
+    assert second_en == "garlic"
+    assert second_es == "ajo"
+
+
+def test_complete_bilingual_name_timeout_enables_cooldown(monkeypatch):
+    import subprocess
+
+    calls = {"count": 0}
+
+    def fake_run(*args, **kwargs):
+        calls["count"] += 1
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=15)
+
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_AVAILABLE", None)
+    monkeypatch.setattr("app.app._INGREDIENT_TRANSLATION_CACHE", {})
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL", 0.0)
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1")
+    monkeypatch.setattr("app.app.os.access", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.app.shutil.which", lambda *_args, **_kwargs: "claude")
+    monkeypatch.setattr("app.app.subprocess.run", fake_run)
+
+    first = _complete_bilingual_name_with_ai("eggplant", "eggplant")
+    second = _complete_bilingual_name_with_ai("garlic", "garlic")
+
+    assert first == ("eggplant", "eggplant")
+    assert second == ("garlic", "garlic")
+    assert calls["count"] == 1
 
 
 def test_extract_recipe_from_url_json_ld(monkeypatch):

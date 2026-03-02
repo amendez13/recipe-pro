@@ -4,8 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
+import shutil
 import subprocess
+import time
 from html import unescape
 from pathlib import Path
 from typing import Any, Optional
@@ -57,6 +60,19 @@ RECIPE_IMPORT_JSON_SCHEMA = {
     },
     "required": ["title", "source_url", "servings", "prep_time", "cook_time", "steps", "ingredients"],
 }
+
+INGREDIENT_TRANSLATION_JSON_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "name_en": {"type": "string"},
+        "name_es": {"type": "string"},
+    },
+    "required": ["name_en", "name_es"],
+}
+
+_CLAUDE_TRANSLATION_AVAILABLE: Optional[bool] = None
+_INGREDIENT_TRANSLATION_CACHE: dict[str, tuple[str, str]] = {}
+_CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL: float = 0.0
 
 
 class IngredientInput(BaseModel):
@@ -282,7 +298,7 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
     base = re.sub(r"\s+", " ", base).strip(" ,.;:")
 
     quantity = 1.0
-    unit = "item"
+    unit = "nonunit"
     remainder = base
 
     range_match = re.match(
@@ -343,6 +359,147 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
 
     notes = "; ".join([note for note in notes_parts if note]) or None
     return {"name": name_token or cleaned, "quantity": quantity, "unit": unit, "category": None, "notes": notes}
+
+
+def _append_note(existing: Optional[str], addition: Optional[str]) -> Optional[str]:
+    extra = str(addition or "").strip(" ,.;:")
+    if not extra:
+        return existing
+    current = str(existing or "").strip()
+    if not current:
+        return extra
+    return f"{current}; {extra}"
+
+
+def _normalize_whitespace(value: str) -> str:
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _clean_import_ingredient_name(
+    raw_name: str,
+    current_unit: str,
+    current_notes: Optional[str],
+) -> tuple[str, str, Optional[str]]:
+    unit_aliases = {
+        "clove": "clove",
+        "cloves": "clove",
+        "piece": "piece",
+        "pieces": "piece",
+        "slice": "slice",
+        "slices": "slice",
+    }
+    name = _normalize_whitespace(raw_name.lower())
+    notes = current_notes
+    unit = str(current_unit or "").strip().lower() or "nonunit"
+
+    if not name:
+        return "", unit, notes
+
+    # Move obvious qualifier words out of canonical ingredient names.
+    qualifiers = [
+        "italian",
+        "small",
+        "globe",
+        "large",
+        "fresh",
+        "kosher",
+        "extra virgin",
+    ]
+    qualifier_hits: list[str] = []
+    for qualifier in qualifiers:
+        pattern = rf"\b{re.escape(qualifier)}\b"
+        if re.search(pattern, name):
+            name = re.sub(pattern, " ", name).strip()
+            qualifier_hits.append(qualifier)
+    if qualifier_hits:
+        notes = _append_note(notes, "qualifier: " + ", ".join(qualifier_hits))
+
+    # Handle common "<ingredient> <unit>" conflation.
+    parts = name.split()
+    if len(parts) >= 2:
+        last = parts[-1]
+        canonical_unit = unit_aliases.get(last)
+        if canonical_unit and unit in {"", "nonunit", "item"}:
+            unit = canonical_unit
+            name = " ".join(parts[:-1]).strip()
+
+    singular_map = {
+        "eggplants": "eggplant",
+        "lemons": "lemon",
+        "limes": "lime",
+        "onions": "onion",
+        "tomatoes": "tomato",
+        "peppers": "pepper",
+        "cloves": "clove",
+    }
+    tokens = [singular_map.get(token, token) for token in name.split()]
+    name = " ".join(tokens)
+    name = _normalize_whitespace(name)
+
+    if name in {"kosher salt", "sea salt"}:
+        notes = _append_note(notes, name.split()[0])
+        name = "salt"
+
+    return name, unit, notes
+
+
+def _split_compound_ingredient_name(name: str) -> list[str]:
+    normalized = _normalize_whitespace(name.lower())
+    if not normalized:
+        return []
+    parts = [part.strip(" ,.;:") for part in re.split(r"\s+(?:or|and|/)\s+", normalized) if part.strip(" ,.;:")]
+    return parts if parts else [normalized]
+
+
+def _canonicalize_import_name(name: str, existing_names: set[str]) -> str:
+    if not name:
+        return name
+    normalized = _normalize_whitespace(name.lower())
+    if normalized in existing_names:
+        return normalized
+    matches = [existing for existing in existing_names if existing in normalized and len(existing) >= 4]
+    if len(matches) == 1:
+        return matches[0]
+    return normalized
+
+
+def _post_process_import_ingredients(
+    ingredients: list[dict[str, Any]],
+    existing_names: Optional[set[str]] = None,
+) -> list[dict[str, Any]]:
+    expanded: list[dict[str, Any]] = []
+    known_names = existing_names or set()
+
+    for item in ingredients:
+        base_name = str(item.get("name_en") or item.get("name") or "").strip()
+        if not base_name:
+            continue
+        quantity = float(item.get("quantity") or 0.0)
+        unit = str(item.get("unit") or "").strip().lower() or "nonunit"
+        category = item.get("category")
+        notes = item.get("notes")
+
+        parts = _split_compound_ingredient_name(base_name)
+        if not parts:
+            continue
+        for part in parts:
+            clean_name, clean_unit, clean_notes = _clean_import_ingredient_name(part, unit, notes)
+            canonical_name = _canonicalize_import_name(clean_name, known_names)
+            if not canonical_name:
+                continue
+            translated_en, translated_es = _complete_bilingual_name_with_ai(canonical_name, canonical_name)
+            expanded.append(
+                {
+                    "name": translated_en or canonical_name,
+                    "name_en": translated_en or canonical_name,
+                    "name_es": translated_es or translated_en or canonical_name,
+                    "quantity": quantity,
+                    "unit": clean_unit if clean_unit and clean_unit != "item" else "nonunit",
+                    "category": category,
+                    "notes": clean_notes,
+                }
+            )
+    return expanded
 
 
 def _normalize_import_ingredient(item: Any) -> Optional[dict[str, Any]]:
@@ -575,6 +732,122 @@ def _normalize_import_recipe(data: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _complete_bilingual_name_with_ai(name_en: Optional[str], name_es: Optional[str]) -> tuple[str, str]:
+    normalized_en = str(name_en or "").strip().lower()
+    normalized_es = str(name_es or "").strip().lower()
+
+    if not normalized_en and not normalized_es:
+        return "", ""
+    if normalized_en and normalized_es and normalized_en != normalized_es:
+        return normalized_en, normalized_es
+
+    fallback = normalized_en or normalized_es
+    if not fallback:
+        return "", ""
+    cached = _INGREDIENT_TRANSLATION_CACHE.get(fallback)
+    if cached:
+        return cached
+
+    global _CLAUDE_TRANSLATION_AVAILABLE, _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL
+    if _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL > time.time():
+        return fallback, fallback
+    if _CLAUDE_TRANSLATION_AVAILABLE is False:
+        return fallback, fallback
+    if os.getenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1") != "1":
+        _CLAUDE_TRANSLATION_AVAILABLE = False
+        return fallback, fallback
+    if shutil.which("claude") is None:
+        _CLAUDE_TRANSLATION_AVAILABLE = False
+        return fallback, fallback
+    # In constrained environments, Claude CLI fails if it cannot write under $HOME.
+    if not os.access(str(Path.home()), os.W_OK):
+        _CLAUDE_TRANSLATION_AVAILABLE = False
+        return fallback, fallback
+
+    prompt = (
+        "You are translating ingredient names between English and Spanish. "
+        "Return only JSON with keys name_en and name_es. "
+        "Each value must be a single ingredient noun phrase in lowercase, no conjunctions like and/or, "
+        "no quantity, no units, no punctuation.\n"
+        f"INPUT_NAME: {fallback}"
+    )
+    command = [
+        "claude",
+        "-p",
+        prompt,
+        "--output-format",
+        "json",
+        "--json-schema",
+        json.dumps(INGREDIENT_TRANSLATION_JSON_SCHEMA),
+    ]
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=15,
+        )
+    except FileNotFoundError:
+        _CLAUDE_TRANSLATION_AVAILABLE = False
+        _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL = time.time() + 600
+        _INGREDIENT_TRANSLATION_CACHE[fallback] = (fallback, fallback)
+        return fallback, fallback
+    except subprocess.TimeoutExpired:
+        logger.warning("Ingredient translation timed out for '%s'", fallback)
+        _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL = time.time() + 600
+        _INGREDIENT_TRANSLATION_CACHE[fallback] = (fallback, fallback)
+        return fallback, fallback
+    except subprocess.CalledProcessError as exc:
+        logger.warning("Ingredient translation failed for '%s': %s", fallback, (exc.stderr or "").strip())
+        _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL = time.time() + 600
+        return fallback, fallback
+
+    _CLAUDE_TRANSLATION_AVAILABLE = True
+    _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL = 0.0
+    try:
+        wrapper = json.loads(result.stdout)
+        if isinstance(wrapper, dict) and wrapper.get("type") == "result":
+            if wrapper.get("is_error"):
+                return fallback, fallback
+            structured = wrapper.get("structured_output")
+            parsed = structured if isinstance(structured, dict) else _extract_json_from_text(str(wrapper.get("result") or ""))
+        else:
+            parsed = _extract_json_from_text(result.stdout)
+        translated_en = _normalize_whitespace(str(parsed.get("name_en") or "").lower())
+        translated_es = _normalize_whitespace(str(parsed.get("name_es") or "").lower())
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return fallback, fallback
+
+    clean_en = translated_en or fallback
+    clean_es = translated_es or fallback
+    # Guardrail: keep one ingredient phrase only.
+    if re.search(r"\b(and|or)\b", clean_en):
+        clean_en = fallback
+    if re.search(r"\b(y|o)\b", clean_es):
+        clean_es = fallback
+    _INGREDIENT_TRANSLATION_CACHE[fallback] = (clean_en, clean_es)
+    return clean_en, clean_es
+
+
+def _enrich_ingredient_payload_names(ingredients: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for item in ingredients:
+        cloned = dict(item)
+        name_en, name_es = _complete_bilingual_name_with_ai(
+            cloned.get("name_en") or cloned.get("name"),
+            cloned.get("name_es") or cloned.get("name"),
+        )
+        if not name_en and not name_es:
+            enriched.append(cloned)
+            continue
+        cloned["name"] = name_en or name_es
+        cloned["name_en"] = name_en or name_es
+        cloned["name_es"] = name_es or name_en
+        enriched.append(cloned)
+    return enriched
+
+
 def _run_claude_recipe_import(prompt: str, allow_web_fetch: bool = False) -> dict[str, Any]:
     command = [
         "claude",
@@ -751,7 +1024,9 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def create_recipe(request: Request, data: RecipePayload) -> dict[str, Any]:
         user = _require_user(request)
         db = _db_for_user(user.username)
-        created = db.create_recipe(data.model_dump())
+        payload = data.model_dump()
+        payload["ingredients"] = _enrich_ingredient_payload_names(payload.get("ingredients", []))
+        created = db.create_recipe(payload)
         return created.to_dict()
 
     @app.get("/api/recipes/{recipe_id}")
@@ -767,7 +1042,9 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def update_recipe(request: Request, recipe_id: int, data: RecipePayload) -> dict[str, Any]:
         user = _require_user(request)
         db = _db_for_user(user.username)
-        updated = db.update_recipe(recipe_id, data.model_dump())
+        payload = data.model_dump()
+        payload["ingredients"] = _enrich_ingredient_payload_names(payload.get("ingredients", []))
+        updated = db.update_recipe(recipe_id, payload)
         if not updated:
             raise HTTPException(status_code=404, detail="Recipe not found")
         return updated.to_dict()
@@ -855,11 +1132,12 @@ def create_app(config: Config | None = None) -> FastAPI:
     ) -> dict[str, Any]:
         user = _require_user(request)
         db = _db_for_user(user.username)
+        translated_en, translated_es = _complete_bilingual_name_with_ai(data.name_en, data.name_es)
         try:
             updated = db.update_ingredient_names(
                 ingredient_id=ingredient_id,
-                name_en=data.name_en,
-                name_es=data.name_es,
+                name_en=translated_en or data.name_en,
+                name_es=translated_es or data.name_es,
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -952,7 +1230,9 @@ def create_app(config: Config | None = None) -> FastAPI:
 
     @app.post("/api/recipes/import-preview")
     async def get_recipe_import_preview(request: Request, data: RecipeImportPayload) -> dict[str, Any]:
-        _require_user(request)
+        user = _require_user(request)
+        db = _db_for_user(user.username)
+        existing_name_en = {ingredient.name_en for ingredient in db.get_all_ingredients() if ingredient.name_en}
         if data.url:
             source_url = data.url.strip()
             parsed = urlparse(source_url)
@@ -961,6 +1241,10 @@ def create_app(config: Config | None = None) -> FastAPI:
 
             extracted = _extract_recipe_from_url(source_url)
             if extracted:
+                extracted["ingredients"] = _post_process_import_ingredients(
+                    extracted.get("ingredients", []),
+                    existing_names=existing_name_en,
+                )
                 return extracted
 
             prompt = (
@@ -970,7 +1254,14 @@ def create_app(config: Config | None = None) -> FastAPI:
                 "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
                 f"URL: {source_url}"
             )
-            return _run_claude_recipe_import(prompt, allow_web_fetch=True)
+            result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
+            result["ingredients"] = _post_process_import_ingredients(
+                result.get("ingredients", []),
+                existing_names=existing_name_en,
+            )
+            if not result.get("ingredients"):
+                raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
+            return result
 
         source_text = (data.text or "").strip()
         if len(source_text) > 30000:
@@ -985,7 +1276,14 @@ def create_app(config: Config | None = None) -> FastAPI:
             "RECIPE TEXT:\n"
             f"{source_text}"
         )
-        return _run_claude_recipe_import(prompt, allow_web_fetch=False)
+        result = _run_claude_recipe_import(prompt, allow_web_fetch=False)
+        result["ingredients"] = _post_process_import_ingredients(
+            result.get("ingredients", []),
+            existing_names=existing_name_en,
+        )
+        if not result.get("ingredients"):
+            raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
+        return result
 
     @app.get("/health")
     async def health_check() -> dict[str, str]:
