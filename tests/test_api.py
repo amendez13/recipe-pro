@@ -809,3 +809,36 @@ def test_extract_recipe_from_url_html_fallback(monkeypatch):
     assert first["name"] == "pimiento rojo asado"
     assert first["quantity"] == 230.0
     assert first["unit"] == "g"
+
+
+def test_extract_recipe_from_url_html_microdata_itemprop(monkeypatch):
+    class DummyResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return b"""
+            <html><head>
+              <title>Pasta e Ceci</title>
+            </head><body>
+              <div itemprop=\"recipeIngredient\">15ml miel</div>
+              <div itemprop=\"recipeIngredient\">230g pimiento rojo asado</div>
+              <p itemprop=\"recipeInstructions\">Mezcla los ingredientes.</p>
+              <p itemprop=\"recipeInstructions\">Sirve.</p>
+            </body></html>
+            """
+
+    def fake_urlopen(*args, **kwargs):
+        return DummyResponse()
+
+    monkeypatch.setattr("app.app.urlopen", fake_urlopen)
+    recipe = _extract_recipe_from_url("https://example.com/microdata")
+    assert recipe is not None
+    assert recipe["title"] == "Pasta e Ceci"
+    assert len(recipe["ingredients"]) == 2
+    assert len(recipe["steps"]) == 2
+    assert recipe["ingredients"][0]["quantity"] == 15.0
+    assert recipe["ingredients"][0]["unit"] == "ml"

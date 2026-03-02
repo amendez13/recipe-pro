@@ -679,39 +679,59 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
         if title_match:
             title = _strip_html_text(title_match.group(1))
 
-    ingredient_markers = ["ingredientes", "ingredients"]
-    step_markers = [
-        "elaboración",
-        "elaboracion",
-        "preparación",
-        "preparacion",
-        "instrucciones",
-        "instructions",
-        "method",
-        "pasos",
-    ]
-
     ingredients: list[str] = []
-    for marker in ingredient_markers:
-        idx = lowered.find(marker)
-        if idx == -1:
-            continue
-        chunk = body[idx : idx + 15000]
-        items = _extract_list_items_from_chunk(chunk)
-        if items:
-            ingredients = items
-            break
-
     steps: list[str] = []
-    for marker in step_markers:
-        idx = lowered.find(marker)
-        if idx == -1:
-            continue
-        chunk = body[idx : idx + 20000]
-        items = _extract_list_items_from_chunk(chunk)
-        if items:
-            steps = items
-            break
+
+    # First, try explicit microdata attributes commonly used by recipe pages.
+    ingredient_attr_matches = re.findall(
+        r"<[^>]+itemprop=[\"']recipeIngredient[\"'][^>]*>(.*?)</[^>]+>",
+        body,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if ingredient_attr_matches:
+        ingredients = [_strip_html_text(item) for item in ingredient_attr_matches if _strip_html_text(item)]
+
+    instruction_attr_matches = re.findall(
+        r"<[^>]+itemprop=[\"']recipeInstructions[\"'][^>]*>(.*?)</[^>]+>",
+        body,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if instruction_attr_matches:
+        steps = [_strip_html_text(item) for item in instruction_attr_matches if _strip_html_text(item)]
+
+    # Then fallback to section-marker list extraction.
+    if not ingredients:
+        ingredient_markers = ["ingredientes", "ingredients"]
+        for marker in ingredient_markers:
+            idx = lowered.find(marker)
+            if idx == -1:
+                continue
+            chunk = body[idx : idx + 15000]
+            items = _extract_list_items_from_chunk(chunk)
+            if items:
+                ingredients = items
+                break
+
+    if not steps:
+        step_markers = [
+            "elaboración",
+            "elaboracion",
+            "preparación",
+            "preparacion",
+            "instrucciones",
+            "instructions",
+            "method",
+            "pasos",
+        ]
+        for marker in step_markers:
+            idx = lowered.find(marker)
+            if idx == -1:
+                continue
+            chunk = body[idx : idx + 20000]
+            items = _extract_list_items_from_chunk(chunk)
+            if items:
+                steps = items
+                break
 
     if not ingredients or not steps:
         return None
