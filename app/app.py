@@ -690,6 +690,11 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
     )
     if ingredient_attr_matches:
         ingredients = [_strip_html_text(item) for item in ingredient_attr_matches if _strip_html_text(item)]
+    logger.info(
+        "import.html_fallback.microdata.ingredients url=%s count=%d",
+        url,
+        len(ingredients),
+    )
 
     instruction_attr_matches = re.findall(
         r"<[^>]+itemprop=[\"']recipeInstructions[\"'][^>]*>(.*?)</[^>]+>",
@@ -698,6 +703,11 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
     )
     if instruction_attr_matches:
         steps = [_strip_html_text(item) for item in instruction_attr_matches if _strip_html_text(item)]
+    logger.info(
+        "import.html_fallback.microdata.steps url=%s count=%d",
+        url,
+        len(steps),
+    )
 
     # Then fallback to section-marker list extraction.
     if not ingredients:
@@ -711,6 +721,11 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
             if items:
                 ingredients = items
                 break
+    logger.info(
+        "import.html_fallback.marker.ingredients url=%s count=%d",
+        url,
+        len(ingredients),
+    )
 
     if not steps:
         step_markers = [
@@ -732,10 +747,29 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
             if items:
                 steps = items
                 break
+    logger.info(
+        "import.html_fallback.marker.steps url=%s count=%d",
+        url,
+        len(steps),
+    )
 
     if not ingredients or not steps:
+        logger.warning(
+            "import.html_fallback.incomplete url=%s title=%s ingredients=%d steps=%d",
+            url,
+            title,
+            len(ingredients),
+            len(steps),
+        )
         return None
 
+    logger.info(
+        "import.html_fallback.success url=%s title=%s ingredients=%d steps=%d",
+        url,
+        title or "Imported recipe",
+        len(ingredients),
+        len(steps),
+    )
     return _normalize_import_recipe(
         {
             "title": title or "Imported recipe",
@@ -762,13 +796,16 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
         with urlopen(request, timeout=25) as response:
             body = response.read().decode("utf-8", errors="ignore")
     except (URLError, TimeoutError, ValueError):
+        logger.warning("import.url_fetch.failed url=%s", url)
         return None
+    logger.info("import.url_fetch.ok url=%s bytes=%d", url, len(body))
 
     json_ld_blocks = re.findall(
         r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
         body,
         flags=re.IGNORECASE | re.DOTALL,
     )
+    logger.info("import.jsonld.blocks url=%s count=%d", url, len(json_ld_blocks))
     for block in json_ld_blocks:
         raw = unescape(block).strip()
         if not raw:
@@ -776,10 +813,12 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
+            logger.debug("import.jsonld.parse_error url=%s", url)
             continue
 
         recipe_node = _find_recipe_node(payload)
         if not recipe_node:
+            logger.debug("import.jsonld.no_recipe_node url=%s", url)
             continue
 
         title = str(recipe_node.get("name") or "").strip()
@@ -805,8 +844,22 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
 
         steps = _extract_steps(recipe_node)
         if not title or not steps or not ingredients:
+            logger.info(
+                "import.jsonld.incomplete url=%s title=%s steps=%d ingredients=%d",
+                url,
+                title,
+                len(steps),
+                len(ingredients),
+            )
             continue
 
+        logger.info(
+            "import.jsonld.success url=%s title=%s steps=%d ingredients=%d",
+            url,
+            title,
+            len(steps),
+            len(ingredients),
+        )
         return _normalize_import_recipe(
             {
             "title": title,
@@ -820,6 +873,7 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
             }
         )
 
+    logger.info("import.jsonld.unavailable_using_html_fallback url=%s", url)
     return _extract_recipe_from_html_fallback(url, body)
 
 
@@ -1076,6 +1130,7 @@ def _claude_runtime_healthcheck(run_probe: bool = False) -> dict[str, Any]:
 
 
 def _run_claude_recipe_import(prompt: str, allow_web_fetch: bool = False) -> dict[str, Any]:
+    logger.info("import.claude.start web_fetch=%s prompt_chars=%d", allow_web_fetch, len(prompt))
     command = [
         "claude",
         "-p",
@@ -1096,11 +1151,14 @@ def _run_claude_recipe_import(prompt: str, allow_web_fetch: bool = False) -> dic
             timeout=120,
         )
     except FileNotFoundError as exc:
+        logger.error("import.claude.missing_cli")
         raise HTTPException(status_code=500, detail="claude CLI not found on server") from exc
     except subprocess.TimeoutExpired as exc:
+        logger.error("import.claude.timeout")
         raise HTTPException(status_code=504, detail="Recipe import timed out") from exc
     except subprocess.CalledProcessError as exc:
         stderr = (exc.stderr or "").strip()
+        logger.error("import.claude.error stderr=%s", stderr or "none")
         raise HTTPException(status_code=502, detail=f"Recipe import failed: {stderr or 'claude CLI error'}") from exc
 
     try:
@@ -1127,10 +1185,23 @@ def _run_claude_recipe_import(prompt: str, allow_web_fetch: bool = False) -> dic
     except HTTPException:
         raise
     except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        logger.error("import.claude.invalid_json error=%s", exc)
         raise HTTPException(status_code=502, detail="Recipe import returned invalid JSON") from exc
 
     if not normalized["title"] or not normalized["steps"] or not normalized["ingredients"]:
+        logger.warning(
+            "import.claude.incomplete title=%s steps=%d ingredients=%d",
+            normalized.get("title"),
+            len(normalized.get("steps") or []),
+            len(normalized.get("ingredients") or []),
+        )
         raise HTTPException(status_code=422, detail="Imported recipe is incomplete")
+    logger.info(
+        "import.claude.success title=%s steps=%d ingredients=%d",
+        normalized.get("title"),
+        len(normalized.get("steps") or []),
+        len(normalized.get("ingredients") or []),
+    )
     return normalized
 
 
@@ -1460,6 +1531,13 @@ def create_app(config: Config | None = None) -> FastAPI:
         user = _require_user(request)
         db = _db_for_user(user.username)
         runtime_health = _claude_runtime_healthcheck(run_probe=False)
+        logger.info(
+            "import.preview.start user=%s has_url=%s has_text=%s ai_ready_basic=%s",
+            user.username,
+            bool(data.url),
+            bool(data.text),
+            runtime_health.get("ready_basic"),
+        )
         warnings: list[str] = []
         if not runtime_health.get("ready_basic"):
             warnings.append(
@@ -1468,8 +1546,10 @@ def create_app(config: Config | None = None) -> FastAPI:
         existing_name_en = {ingredient.name_en for ingredient in db.get_all_ingredients() if ingredient.name_en}
         if data.url:
             source_url = data.url.strip()
+            logger.info("import.preview.url.start user=%s url=%s", user.username, source_url)
             parsed = urlparse(source_url)
             if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                logger.warning("import.preview.url.invalid user=%s url=%s", user.username, source_url)
                 raise HTTPException(status_code=400, detail="Invalid URL")
 
             extracted = _extract_recipe_from_url(source_url)
@@ -1481,6 +1561,14 @@ def create_app(config: Config | None = None) -> FastAPI:
                 warnings.append("AI extraction was skipped because structured recipe data was found directly on the URL.")
                 extracted["warnings"] = warnings
                 extracted["ai_status"] = runtime_health
+                logger.info(
+                    "import.preview.url.extracted user=%s title=%s steps=%d ingredients=%d warnings=%d",
+                    user.username,
+                    extracted.get("title"),
+                    len(extracted.get("steps") or []),
+                    len(extracted.get("ingredients") or []),
+                    len(warnings),
+                )
                 return extracted
 
             prompt = (
@@ -1493,6 +1581,12 @@ def create_app(config: Config | None = None) -> FastAPI:
             try:
                 result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
             except HTTPException as exc:
+                logger.warning(
+                    "import.preview.url.claude_failed user=%s status=%d detail=%s",
+                    user.username,
+                    exc.status_code,
+                    exc.detail,
+                )
                 if (
                     exc.status_code in {422, 502, 504}
                     and not runtime_health.get("ready_basic")
@@ -1510,13 +1604,24 @@ def create_app(config: Config | None = None) -> FastAPI:
                 existing_names=existing_name_en,
             )
             if not result.get("ingredients"):
+                logger.warning("import.preview.url.no_ingredients_after_postprocess user=%s", user.username)
                 raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
             result["warnings"] = warnings
             result["ai_status"] = runtime_health
+            logger.info(
+                "import.preview.url.success user=%s title=%s steps=%d ingredients=%d warnings=%d",
+                user.username,
+                result.get("title"),
+                len(result.get("steps") or []),
+                len(result.get("ingredients") or []),
+                len(warnings),
+            )
             return result
 
         source_text = (data.text or "").strip()
+        logger.info("import.preview.text.start user=%s chars=%d", user.username, len(source_text))
         if len(source_text) > 30000:
+            logger.warning("import.preview.text.too_long user=%s chars=%d", user.username, len(source_text))
             raise HTTPException(status_code=400, detail="Recipe text is too long (max 30000 characters)")
 
         prompt = (
@@ -1534,9 +1639,18 @@ def create_app(config: Config | None = None) -> FastAPI:
             existing_names=existing_name_en,
         )
         if not result.get("ingredients"):
+            logger.warning("import.preview.text.no_ingredients_after_postprocess user=%s", user.username)
             raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
         result["warnings"] = warnings
         result["ai_status"] = runtime_health
+        logger.info(
+            "import.preview.text.success user=%s title=%s steps=%d ingredients=%d warnings=%d",
+            user.username,
+            result.get("title"),
+            len(result.get("steps") or []),
+            len(result.get("ingredients") or []),
+            len(warnings),
+        )
         return result
 
     @app.get("/api/import/health")
