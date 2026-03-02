@@ -1384,9 +1384,14 @@ async function renderIngredientsView() {
     function renderList(search = '') {
         const term = search.trim().toLowerCase();
         const filtered = ingredients.filter((ingredient) => {
+            if (!term) {
+                return true;
+            }
             const english = String(ingredient.name_en || ingredient.name || '').toLowerCase();
             const spanish = String(ingredient.name_es || ingredient.name_en || ingredient.name || '').toLowerCase();
-            return english.includes(term) || spanish.includes(term);
+            const recipeTitles = recipeUsageByIngredientId.get(ingredient.id) || [];
+            const recipeMatch = recipeTitles.some((title) => String(title || '').toLowerCase().includes(term));
+            return english.includes(term) || spanish.includes(term) || recipeMatch;
         });
         listEl.innerHTML = '';
         if (!filtered.length) {
