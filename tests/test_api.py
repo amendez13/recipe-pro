@@ -587,6 +587,44 @@ def test_post_process_import_ingredients_translates_name_es_with_ai(monkeypatch)
     assert processed[0]["name_es"] == "berenjena"
 
 
+def test_normalize_import_recipe_parses_spanish_compact_quantity_and_units():
+    normalized = _normalize_import_recipe(
+        {
+            "title": "Muhammara",
+            "steps": ["Mix"],
+            "ingredients": [
+                {"name": "15ml miel", "quantity": None, "unit": None, "notes": None},
+                {"name": "230g pimiento rojo asado", "quantity": None, "unit": None, "notes": None},
+                {"name": "2count diente de ajo", "quantity": None, "unit": None, "notes": None},
+                {"name": "50ml aceite de oliva virgen extra", "quantity": None, "unit": None, "notes": None},
+                {"name": "5ml zumo de limón", "quantity": None, "unit": None, "notes": None},
+            ],
+        }
+    )
+    post = _post_process_import_ingredients(normalized["ingredients"], existing_names={"aceite de oliva", "ajo"})
+
+    by_name = {item["name_en"]: item for item in post}
+
+    assert by_name["miel"]["quantity"] == 15.0
+    assert by_name["miel"]["unit"] == "ml"
+
+    assert by_name["pimiento"]["quantity"] == 230.0
+    assert by_name["pimiento"]["unit"] == "g"
+    assert "rojo" in str(by_name["pimiento"]["notes"])
+    assert "asado" in str(by_name["pimiento"]["notes"])
+
+    assert by_name["ajo"]["quantity"] == 2.0
+    assert by_name["ajo"]["unit"] == "clove"
+
+    assert by_name["aceite de oliva"]["quantity"] == 50.0
+    assert by_name["aceite de oliva"]["unit"] == "ml"
+    assert "virgen extra" in str(by_name["aceite de oliva"]["notes"])
+
+    assert by_name["limón"]["quantity"] == 5.0
+    assert by_name["limón"]["unit"] == "ml"
+    assert "zumo de" in str(by_name["limón"]["notes"])
+
+
 def test_complete_bilingual_name_with_ai(monkeypatch):
     class DummyResult:
         stdout = """

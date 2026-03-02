@@ -176,7 +176,7 @@ class LoginPayload(BaseModel):
 
 
 def _parse_fractional_number(value: str) -> Optional[float]:
-    token = value.strip()
+    token = value.strip().replace(",", ".")
     if not token:
         return None
     if " " in token:
@@ -286,6 +286,26 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
         "cans": "can",
         "piece": "piece",
         "pieces": "piece",
+        "count": "piece",
+        "counts": "piece",
+        "gr": "g",
+        "grs": "g",
+        "gramo": "g",
+        "gramos": "g",
+        "mililitro": "ml",
+        "mililitros": "ml",
+        "litro": "l",
+        "litros": "l",
+        "cucharadita": "teaspoon",
+        "cucharaditas": "teaspoon",
+        "cda": "tablespoon",
+        "cda.": "tablespoon",
+        "cucharada": "tablespoon",
+        "cucharadas": "tablespoon",
+        "diente": "clove",
+        "dientes": "clove",
+        "unidad": "piece",
+        "unidades": "piece",
     }
 
     notes_parts: list[str] = []
@@ -323,6 +343,25 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
             notes_parts.insert(0, f"quantity range: {start_token}-{end_token}")
         remainder = range_match.group("rest").strip()
     else:
+        compact_qty_unit_match = re.match(
+            r"^(?P<qty>\d+(?:[.,]\d+)?)(?P<unit>[A-Za-zÀ-ÿ]+)\b(?:\s+(?P<rest>.+))?$",
+            remainder,
+            flags=re.IGNORECASE,
+        )
+        if compact_qty_unit_match:
+            qty_token = compact_qty_unit_match.group("qty")
+            raw_unit = compact_qty_unit_match.group("unit").strip().lower().rstrip(".")
+            canonical_unit = unit_aliases.get(raw_unit)
+            if canonical_unit:
+                try:
+                    parsed_qty = _parse_fractional_number(qty_token)
+                    if parsed_qty is not None and parsed_qty > 0:
+                        quantity = parsed_qty
+                except ValueError:
+                    pass
+                unit = canonical_unit
+                remainder = (compact_qty_unit_match.group("rest") or "").strip()
+
         qty_match = re.match(
             r"^(?P<qty>a|an|\d+(?:\.\d+)?(?:/\d+)?(?:\s+\d+/\d+)?)\s+(?P<rest>.+)$",
             remainder,
@@ -341,13 +380,14 @@ def _parse_ingredient_line(text: str) -> dict[str, Any]:
                     quantity = 1.0
             remainder = qty_match.group("rest").strip()
 
-    unit_match = re.match(r"^(?P<unit>[A-Za-z]+)\b(?P<rest>.*)$", remainder)
+    unit_match = re.match(r"^(?P<unit>[A-Za-zÀ-ÿ]+)\b(?P<rest>.*)$", remainder)
     if unit_match:
         raw_unit = unit_match.group("unit").strip().lower().rstrip(".")
         canonical_unit = unit_aliases.get(raw_unit)
         if canonical_unit:
             unit = canonical_unit
             remainder = unit_match.group("rest").strip()
+            remainder = re.sub(r"^(?:de|del)\s+", "", remainder, flags=re.IGNORECASE)
 
     name_token = remainder.strip(" ,.;:") or base
     if "," in name_token:
@@ -395,6 +435,18 @@ def _clean_import_ingredient_name(
     if not name:
         return "", unit, notes
 
+    # Move source/preparation prefix into notes.
+    source_prefixes = {
+        "juice of ": "juice of",
+        "zumo de ": "zumo de",
+        "jugo de ": "jugo de",
+    }
+    for prefix, note_value in source_prefixes.items():
+        if name.startswith(prefix):
+            name = name[len(prefix):].strip()
+            notes = _append_note(notes, note_value)
+            break
+
     # Move obvious qualifier words out of canonical ingredient names.
     qualifiers = [
         "italian",
@@ -404,6 +456,13 @@ def _clean_import_ingredient_name(
         "fresh",
         "kosher",
         "extra virgin",
+        "virgen extra",
+        "asado",
+        "asada",
+        "tostado",
+        "tostada",
+        "rojo",
+        "roja",
     ]
     qualifier_hits: list[str] = []
     for qualifier in qualifiers:
@@ -439,6 +498,9 @@ def _clean_import_ingredient_name(
     if name in {"kosher salt", "sea salt"}:
         notes = _append_note(notes, name.split()[0])
         name = "salt"
+
+    if name == "aceite de oliva":
+        return name, unit, notes
 
     return name, unit, notes
 
