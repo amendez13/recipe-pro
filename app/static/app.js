@@ -1626,6 +1626,7 @@ async function renderIngredientsView() {
             mergeConfirmCollisionEl.checked = false;
             latestPreview = null;
             ingredients = await api.getIngredients();
+            await loadRecipeUsage();
             renderList(searchEl.value);
             renderMergeSelectors();
             await renderMergeHistory();
@@ -1639,7 +1640,7 @@ async function renderIngredientsView() {
     try {
         ingredients = await api.getIngredients();
         await loadRecipeUsage();
-        renderList();
+        renderList(searchEl.value);
         renderMergeSelectors();
         await renderMergeHistory();
     } catch (err) {
