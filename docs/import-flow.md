@@ -4,46 +4,46 @@ This diagram documents the current end-to-end implementation for recipe import, 
 
 ```mermaid
 flowchart TD
-    A[User pastes recipe URL in Import Assistant] --> B[Frontend calls POST /api/recipes/import-preview with url]
-    B --> C[Backend: auth + runtime health check + load existing ingredient names]
-    C --> D{URL valid http/https + netloc?}
-    D -- No --> E[400 Invalid URL]
-    D -- Yes --> F[Try deterministic extraction: _extract_recipe_from_url]
+    A["User enters recipe URL"] --> B["POST /api/recipes/import-preview"]
+    B --> C["Auth, health check, load existing ingredient names"]
+    C --> D{"URL valid"}
+    D -- "No" --> E["HTTP 400 invalid URL"]
+    D -- "Yes" --> F["Deterministic extract from URL"]
 
-    F --> G{Structured recipe found?}
-    G -- Yes --> H[Post-process ingredients: split compounds, normalize qty/unit, bilingual fill, DB-name matching]
-    H --> I[Attach warnings + ai_status]
-    I --> J[Return preview JSON]
+    F --> G{"Structured recipe found"}
+    G -- "Yes" --> H["Post process ingredients"]
+    H --> I["Add warnings and ai_status"]
+    I --> J["Return preview JSON"]
 
-    G -- No --> K[Extract recipe-focused text: _extract_recipe_text_from_url]
-    K --> L{Text extracted?}
+    G -- "No" --> K["Extract recipe focused text from page"]
+    K --> L{"Text extracted"}
 
-    L -- Yes --> M[Build PAGE TEXT prompt]
-    M --> N[Claude import call with allow_web_fetch=false]
-    N --> O{Claude text call success?}
-    O -- Yes --> P[Use Claude result]
-    O -- No --> Q[If AI not ready and status in 422/502/504 -> 502 actionable error]
-    O -- No --> R[Last resort Claude call with allow_web_fetch=true]
-    R --> S[Use Claude web-fetch result]
+    L -- "Yes" --> M["Build prompt with page text"]
+    M --> N["Claude call without web fetch"]
+    N --> O{"Text based Claude success"}
+    O -- "Yes" --> P["Use Claude text result"]
+    O -- "No" --> Q{"AI runtime ready"}
+    Q -- "No" --> R["HTTP 502 with actionable error"]
+    Q -- "Yes" --> S["Claude call with web fetch"]
+    S --> T["Use Claude web result"]
 
-    L -- No --> T[Claude URL call with allow_web_fetch=true]
-    T --> U{Claude URL call success?}
-    U -- No --> V[Propagate error or 502 if AI runtime not ready]
-    U -- Yes --> W[Use Claude URL result]
+    L -- "No" --> U["Claude URL call with web fetch"]
+    U --> V{"Claude URL success"}
+    V -- "No" --> W["Propagate error"]
+    V -- "Yes" --> X["Use Claude URL result"]
 
-    P --> X[Post-process ingredients]
-    S --> X
-    W --> X
-    X --> Y{Any valid ingredients after post-process?}
-    Y -- No --> Z[422 Imported recipe has no valid ingredients]
-    Y -- Yes --> AA[Attach warnings + ai_status]
-    AA --> J
+    P --> Y["Post process ingredients"]
+    T --> Y
+    X --> Y
+    Y --> Z{"Any valid ingredients"}
+    Z -- "No" --> AA["HTTP 422 no valid ingredients"]
+    Z -- "Yes" --> AB["Add warnings and ai_status"]
+    AB --> J
 
-    J --> AB[Frontend renders preview + enables Confirm and Add Recipe]
-    AB --> AC[User confirms import]
-    AC --> AD[Frontend maps preview -> POST /api/recipes]
-    AD --> AE[Backend creates recipe in DB]
-    AE --> AF[Recipe created and shown in UI]
+    J --> AC["Frontend shows preview and enables confirm"]
+    AC --> AD["User confirms import"]
+    AD --> AE["POST /api/recipes"]
+    AE --> AF["Recipe stored in DB and shown in UI"]
 ```
 
 Notes:
