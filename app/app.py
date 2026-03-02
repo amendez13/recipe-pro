@@ -26,6 +26,7 @@ from .config import Config, get_default_config_path, load_config
 from .database import RecipeDatabase
 
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 MODULE_DIR = Path(__file__).resolve().parent
 STATIC_DIR = MODULE_DIR / "static"
