@@ -455,6 +455,86 @@ def test_recipe_import_preview_parses_fenced_json(client, monkeypatch):
     assert len(body["ingredients"]) == 1
 
 
+def test_recipe_import_preview_uses_extracted_text_before_web_fetch(client, monkeypatch):
+    calls = []
+
+    def fake_run_claude(prompt: str, allow_web_fetch: bool = False):
+        calls.append({"prompt": prompt, "allow_web_fetch": allow_web_fetch})
+        return {
+            "title": "From Extracted Text",
+            "source_url": "https://example.com/text-first",
+            "servings": 2,
+            "prep_time": 10,
+            "cook_time": 20,
+            "steps": ["Mix", "Serve"],
+            "ingredients": [
+                {
+                    "name": "salt",
+                    "name_en": "salt",
+                    "name_es": "sal",
+                    "quantity": 1,
+                    "unit": "tsp",
+                    "category": "spices",
+                    "notes": "",
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.app._extract_recipe_from_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.app._extract_recipe_text_from_url", lambda *_args, **_kwargs: "Ingredientes: sal")
+    monkeypatch.setattr("app.app._run_claude_recipe_import", fake_run_claude)
+
+    response = client.post("/api/recipes/import-preview", json={"url": "https://example.com/text-first"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "From Extracted Text"
+    assert len(calls) == 1
+    assert calls[0]["allow_web_fetch"] is False
+    assert "PAGE TEXT" in calls[0]["prompt"]
+
+
+def test_recipe_import_preview_text_fallback_retries_with_web_fetch(client, monkeypatch):
+    from fastapi import HTTPException
+
+    calls = []
+
+    def fake_run_claude(prompt: str, allow_web_fetch: bool = False):
+        calls.append({"prompt": prompt, "allow_web_fetch": allow_web_fetch})
+        if not allow_web_fetch:
+            raise HTTPException(status_code=422, detail="Imported recipe is incomplete")
+        return {
+            "title": "From Web Fetch",
+            "source_url": "https://example.com/web-fallback",
+            "servings": 2,
+            "prep_time": 10,
+            "cook_time": 20,
+            "steps": ["Mix", "Serve"],
+            "ingredients": [
+                {
+                    "name": "salt",
+                    "name_en": "salt",
+                    "name_es": "sal",
+                    "quantity": 1,
+                    "unit": "tsp",
+                    "category": "spices",
+                    "notes": "",
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.app._extract_recipe_from_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.app._extract_recipe_text_from_url", lambda *_args, **_kwargs: "Ingredientes: sal")
+    monkeypatch.setattr("app.app._run_claude_recipe_import", fake_run_claude)
+
+    response = client.post("/api/recipes/import-preview", json={"url": "https://example.com/web-fallback"})
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "From Web Fetch"
+    assert len(calls) == 2
+    assert calls[0]["allow_web_fetch"] is False
+    assert calls[1]["allow_web_fetch"] is True
+
+
 def test_recipe_import_preview_normalizes_null_source_and_unit(client, monkeypatch):
     class DummyResult:
         stdout = """

@@ -785,6 +785,60 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
     )
 
 
+def _extract_recipe_text_from_url(url: str) -> Optional[str]:
+    request = UrlRequest(
+        url,
+        headers={
+            "User-Agent": "Mozilla/5.0 (compatible; RecipePro/1.0; +https://example.local)",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    )
+    try:
+        with urlopen(request, timeout=25) as response:
+            body = response.read().decode("utf-8", errors="ignore")
+    except (URLError, TimeoutError, ValueError):
+        logger.warning("import.url_text_fetch.failed url=%s", url)
+        return None
+
+    # Remove noisy blocks first.
+    cleaned = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", body)
+    cleaned = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", cleaned)
+    cleaned = re.sub(r"(?is)<!--.*?-->", " ", cleaned)
+    lowered = cleaned.lower()
+
+    ingredient_markers = ["ingredientes", "ingredients"]
+    step_markers = ["elaboración", "elaboracion", "preparación", "preparacion", "instructions", "method", "pasos"]
+
+    ingredient_idx = min((lowered.find(marker) for marker in ingredient_markers if lowered.find(marker) != -1), default=-1)
+    step_idx = min((lowered.find(marker) for marker in step_markers if lowered.find(marker) != -1), default=-1)
+
+    if ingredient_idx != -1 and step_idx != -1:
+        start = min(ingredient_idx, step_idx)
+        end = max(ingredient_idx, step_idx) + 22000
+        focus_chunk = cleaned[start:end]
+    elif ingredient_idx != -1:
+        focus_chunk = cleaned[ingredient_idx : ingredient_idx + 26000]
+    elif step_idx != -1:
+        focus_chunk = cleaned[step_idx : step_idx + 26000]
+    else:
+        # Fallback to article/main-ish content.
+        main_match = re.search(
+            r"(?is)<(?:main|article|section)[^>]*>(.*?)</(?:main|article|section)>",
+            cleaned,
+        )
+        focus_chunk = main_match.group(1) if main_match else cleaned
+
+    text = _strip_html_text(focus_chunk)
+    if not text:
+        return None
+
+    # Keep prompt context bounded for model reliability.
+    if len(text) > 24000:
+        text = text[:24000]
+    logger.info("import.url_text_extract.ok url=%s chars=%d", url, len(text))
+    return text
+
+
 def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
     request = UrlRequest(
         url,
@@ -1579,27 +1633,72 @@ def create_app(config: Config | None = None) -> FastAPI:
                 "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
                 f"URL: {source_url}"
             )
-            try:
-                result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
-            except HTTPException as exc:
-                logger.warning(
-                    "import.preview.url.claude_failed user=%s status=%d detail=%s",
-                    user.username,
-                    exc.status_code,
-                    exc.detail,
+            text_for_ai = _extract_recipe_text_from_url(source_url)
+            if text_for_ai:
+                logger.info("import.preview.url.using_text_for_ai user=%s chars=%d", user.username, len(text_for_ai))
+                prompt = (
+                    "Extract a structured recipe from this page text and return only valid JSON with keys: "
+                    "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
+                    "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
+                    "Use source_url exactly as provided. "
+                    "If one language is unavailable, set both name_en and name_es to the best available ingredient name.\n"
+                    f"SOURCE_URL: {source_url}\n"
+                    "PAGE TEXT:\n"
+                    f"{text_for_ai}"
                 )
-                if (
-                    exc.status_code in {422, 502, 504}
-                    and not runtime_health.get("ready_basic")
-                ):
-                    raise HTTPException(
-                        status_code=502,
-                        detail=(
-                            "Could not extract recipe from URL. Structured data extraction failed and "
-                            "AI fallback is not ready on server. Check /api/import/health."
+                try:
+                    result = _run_claude_recipe_import(prompt, allow_web_fetch=False)
+                except HTTPException as exc:
+                    logger.warning(
+                        "import.preview.url.text_claude_failed user=%s status=%d detail=%s",
+                        user.username,
+                        exc.status_code,
+                        exc.detail,
+                    )
+                    if (
+                        exc.status_code in {422, 502, 504}
+                        and not runtime_health.get("ready_basic")
+                    ):
+                        raise HTTPException(
+                            status_code=502,
+                            detail=(
+                                "Could not extract recipe from URL. Structured parsing failed and "
+                                "AI fallback is not ready on server. Check /api/import/health."
+                            ),
+                        ) from exc
+                    # last resort: web fetch mode
+                    result = _run_claude_recipe_import(
+                        (
+                            "Extract the recipe from this URL and return only valid JSON with keys: "
+                            "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
+                            "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
+                            "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
+                            f"URL: {source_url}"
                         ),
-                    ) from exc
-                raise
+                        allow_web_fetch=True,
+                    )
+            else:
+                try:
+                    result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
+                except HTTPException as exc:
+                    logger.warning(
+                        "import.preview.url.claude_failed user=%s status=%d detail=%s",
+                        user.username,
+                        exc.status_code,
+                        exc.detail,
+                    )
+                    if (
+                        exc.status_code in {422, 502, 504}
+                        and not runtime_health.get("ready_basic")
+                    ):
+                        raise HTTPException(
+                            status_code=502,
+                            detail=(
+                                "Could not extract recipe from URL. Structured parsing failed and "
+                                "AI fallback is not ready on server. Check /api/import/health."
+                            ),
+                        ) from exc
+                    raise
             result["ingredients"] = _post_process_import_ingredients(
                 result.get("ingredients", []),
                 existing_names=existing_name_en,
