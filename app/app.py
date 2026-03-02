@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from html import unescape
 from pathlib import Path
 from typing import Any, Optional
@@ -71,6 +72,7 @@ INGREDIENT_TRANSLATION_JSON_SCHEMA = {
 
 _CLAUDE_TRANSLATION_AVAILABLE: Optional[bool] = None
 _INGREDIENT_TRANSLATION_CACHE: dict[str, tuple[str, str]] = {}
+_CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL: float = 0.0
 
 
 class IngredientInput(BaseModel):
@@ -746,7 +748,9 @@ def _complete_bilingual_name_with_ai(name_en: Optional[str], name_es: Optional[s
     if cached:
         return cached
 
-    global _CLAUDE_TRANSLATION_AVAILABLE
+    global _CLAUDE_TRANSLATION_AVAILABLE, _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL
+    if _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL > time.time():
+        return fallback, fallback
     if _CLAUDE_TRANSLATION_AVAILABLE is False:
         return fallback, fallback
     if os.getenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1") != "1":
@@ -786,17 +790,21 @@ def _complete_bilingual_name_with_ai(name_en: Optional[str], name_es: Optional[s
         )
     except FileNotFoundError:
         _CLAUDE_TRANSLATION_AVAILABLE = False
+        _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL = time.time() + 600
         _INGREDIENT_TRANSLATION_CACHE[fallback] = (fallback, fallback)
         return fallback, fallback
     except subprocess.TimeoutExpired:
         logger.warning("Ingredient translation timed out for '%s'", fallback)
+        _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL = time.time() + 600
         _INGREDIENT_TRANSLATION_CACHE[fallback] = (fallback, fallback)
         return fallback, fallback
     except subprocess.CalledProcessError as exc:
         logger.warning("Ingredient translation failed for '%s': %s", fallback, (exc.stderr or "").strip())
+        _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL = time.time() + 600
         return fallback, fallback
 
     _CLAUDE_TRANSLATION_AVAILABLE = True
+    _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL = 0.0
     try:
         wrapper = json.loads(result.stdout)
         if isinstance(wrapper, dict) and wrapper.get("type") == "result":

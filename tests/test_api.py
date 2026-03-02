@@ -646,6 +646,7 @@ def test_complete_bilingual_name_timeout_does_not_disable_future_attempts(monkey
 
     monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_AVAILABLE", None)
     monkeypatch.setattr("app.app._INGREDIENT_TRANSLATION_CACHE", {})
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL", 0.0)
     monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1")
     monkeypatch.setattr("app.app.os.access", lambda *_args, **_kwargs: True)
     monkeypatch.setattr("app.app.shutil.which", lambda *_args, **_kwargs: "claude")
@@ -655,9 +656,36 @@ def test_complete_bilingual_name_timeout_does_not_disable_future_attempts(monkey
     assert first_en == "garlic"
     assert first_es == "garlic"
 
+    # Simulate cooldown window elapsed so translation can retry.
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL", 0.0)
     second_en, second_es = _complete_bilingual_name_with_ai("onion", "onion")
     assert second_en == "garlic"
     assert second_es == "ajo"
+
+
+def test_complete_bilingual_name_timeout_enables_cooldown(monkeypatch):
+    import subprocess
+
+    calls = {"count": 0}
+
+    def fake_run(*args, **kwargs):
+        calls["count"] += 1
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=15)
+
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_AVAILABLE", None)
+    monkeypatch.setattr("app.app._INGREDIENT_TRANSLATION_CACHE", {})
+    monkeypatch.setattr("app.app._CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL", 0.0)
+    monkeypatch.setenv("RECIPE_PRO_ENABLE_AI_INGREDIENT_TRANSLATION", "1")
+    monkeypatch.setattr("app.app.os.access", lambda *_args, **_kwargs: True)
+    monkeypatch.setattr("app.app.shutil.which", lambda *_args, **_kwargs: "claude")
+    monkeypatch.setattr("app.app.subprocess.run", fake_run)
+
+    first = _complete_bilingual_name_with_ai("eggplant", "eggplant")
+    second = _complete_bilingual_name_with_ai("garlic", "garlic")
+
+    assert first == ("eggplant", "eggplant")
+    assert second == ("garlic", "garlic")
+    assert calls["count"] == 1
 
 
 def test_extract_recipe_from_url_json_ld(monkeypatch):
