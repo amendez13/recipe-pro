@@ -12,6 +12,7 @@ import time
 from html import unescape
 from pathlib import Path
 from typing import Any, Optional
+from uuid import uuid4
 from urllib.error import URLError
 from urllib.parse import urlparse
 from urllib.request import Request as UrlRequest, urlopen
@@ -74,6 +75,14 @@ INGREDIENT_TRANSLATION_JSON_SCHEMA = {
 _CLAUDE_TRANSLATION_AVAILABLE: Optional[bool] = None
 _INGREDIENT_TRANSLATION_CACHE: dict[str, tuple[str, str]] = {}
 _CLAUDE_TRANSLATION_UNAVAILABLE_UNTIL: float = 0.0
+
+
+def _log_import_flow(flow_id: str, event: str, **details: Any) -> None:
+    try:
+        serialized = json.dumps(details, ensure_ascii=True, sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        serialized = str(details)
+    logger.info("import.flow flow_id=%s event=%s details=%s", flow_id, event, serialized)
 
 
 class IngredientInput(BaseModel):
@@ -664,7 +673,8 @@ def _extract_list_items_from_chunk(chunk: str) -> list[str]:
     return [item for item in items if item]
 
 
-def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str, Any]]:
+def _extract_recipe_from_html_fallback(url: str, body: str, flow_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+    log_flow_id = flow_id or "-"
     lowered = body.lower()
 
     title = ""
@@ -692,7 +702,8 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
     if ingredient_attr_matches:
         ingredients = [_strip_html_text(item) for item in ingredient_attr_matches if _strip_html_text(item)]
     logger.info(
-        "import.html_fallback.microdata.ingredients url=%s count=%d",
+        "import.html_fallback.microdata.ingredients flow_id=%s url=%s count=%d",
+        log_flow_id,
         url,
         len(ingredients),
     )
@@ -705,7 +716,8 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
     if instruction_attr_matches:
         steps = [_strip_html_text(item) for item in instruction_attr_matches if _strip_html_text(item)]
     logger.info(
-        "import.html_fallback.microdata.steps url=%s count=%d",
+        "import.html_fallback.microdata.steps flow_id=%s url=%s count=%d",
+        log_flow_id,
         url,
         len(steps),
     )
@@ -723,7 +735,8 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
                 ingredients = items
                 break
     logger.info(
-        "import.html_fallback.marker.ingredients url=%s count=%d",
+        "import.html_fallback.marker.ingredients flow_id=%s url=%s count=%d",
+        log_flow_id,
         url,
         len(ingredients),
     )
@@ -749,14 +762,16 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
                 steps = items
                 break
     logger.info(
-        "import.html_fallback.marker.steps url=%s count=%d",
+        "import.html_fallback.marker.steps flow_id=%s url=%s count=%d",
+        log_flow_id,
         url,
         len(steps),
     )
 
     if not ingredients or not steps:
         logger.warning(
-            "import.html_fallback.incomplete url=%s title=%s ingredients=%d steps=%d",
+            "import.html_fallback.incomplete flow_id=%s url=%s title=%s ingredients=%d steps=%d",
+            log_flow_id,
             url,
             title,
             len(ingredients),
@@ -765,7 +780,8 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
         return None
 
     logger.info(
-        "import.html_fallback.success url=%s title=%s ingredients=%d steps=%d",
+        "import.html_fallback.success flow_id=%s url=%s title=%s ingredients=%d steps=%d",
+        log_flow_id,
         url,
         title or "Imported recipe",
         len(ingredients),
@@ -785,7 +801,8 @@ def _extract_recipe_from_html_fallback(url: str, body: str) -> Optional[dict[str
     )
 
 
-def _extract_recipe_text_from_url(url: str) -> Optional[str]:
+def _extract_recipe_text_from_url(url: str, flow_id: Optional[str] = None) -> Optional[str]:
+    log_flow_id = flow_id or "-"
     request = UrlRequest(
         url,
         headers={
@@ -797,7 +814,7 @@ def _extract_recipe_text_from_url(url: str) -> Optional[str]:
         with urlopen(request, timeout=25) as response:
             body = response.read().decode("utf-8", errors="ignore")
     except (URLError, TimeoutError, ValueError):
-        logger.warning("import.url_text_fetch.failed url=%s", url)
+        logger.warning("import.url_text_fetch.failed flow_id=%s url=%s", log_flow_id, url)
         return None
 
     # Remove noisy blocks first.
@@ -835,11 +852,12 @@ def _extract_recipe_text_from_url(url: str) -> Optional[str]:
     # Keep prompt context bounded for model reliability.
     if len(text) > 24000:
         text = text[:24000]
-    logger.info("import.url_text_extract.ok url=%s chars=%d", url, len(text))
+    logger.info("import.url_text_extract.ok flow_id=%s url=%s chars=%d", log_flow_id, url, len(text))
     return text
 
 
-def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
+def _extract_recipe_from_url(url: str, flow_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+    log_flow_id = flow_id or "-"
     request = UrlRequest(
         url,
         headers={
@@ -851,16 +869,16 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
         with urlopen(request, timeout=25) as response:
             body = response.read().decode("utf-8", errors="ignore")
     except (URLError, TimeoutError, ValueError):
-        logger.warning("import.url_fetch.failed url=%s", url)
+        logger.warning("import.url_fetch.failed flow_id=%s url=%s", log_flow_id, url)
         return None
-    logger.info("import.url_fetch.ok url=%s bytes=%d", url, len(body))
+    logger.info("import.url_fetch.ok flow_id=%s url=%s bytes=%d", log_flow_id, url, len(body))
 
     json_ld_blocks = re.findall(
         r"<script[^>]+type=[\"']application/ld\+json[\"'][^>]*>(.*?)</script>",
         body,
         flags=re.IGNORECASE | re.DOTALL,
     )
-    logger.info("import.jsonld.blocks url=%s count=%d", url, len(json_ld_blocks))
+    logger.info("import.jsonld.blocks flow_id=%s url=%s count=%d", log_flow_id, url, len(json_ld_blocks))
     for block in json_ld_blocks:
         raw = unescape(block).strip()
         if not raw:
@@ -868,12 +886,12 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
         try:
             payload = json.loads(raw)
         except json.JSONDecodeError:
-            logger.debug("import.jsonld.parse_error url=%s", url)
+            logger.debug("import.jsonld.parse_error flow_id=%s url=%s", log_flow_id, url)
             continue
 
         recipe_node = _find_recipe_node(payload)
         if not recipe_node:
-            logger.debug("import.jsonld.no_recipe_node url=%s", url)
+            logger.debug("import.jsonld.no_recipe_node flow_id=%s url=%s", log_flow_id, url)
             continue
 
         title = str(recipe_node.get("name") or "").strip()
@@ -900,7 +918,8 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
         steps = _extract_steps(recipe_node)
         if not title or not steps or not ingredients:
             logger.info(
-                "import.jsonld.incomplete url=%s title=%s steps=%d ingredients=%d",
+                "import.jsonld.incomplete flow_id=%s url=%s title=%s steps=%d ingredients=%d",
+                log_flow_id,
                 url,
                 title,
                 len(steps),
@@ -909,7 +928,8 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
             continue
 
         logger.info(
-            "import.jsonld.success url=%s title=%s steps=%d ingredients=%d",
+            "import.jsonld.success flow_id=%s url=%s title=%s steps=%d ingredients=%d",
+            log_flow_id,
             url,
             title,
             len(steps),
@@ -929,7 +949,7 @@ def _extract_recipe_from_url(url: str) -> Optional[dict[str, Any]]:
         )
 
     logger.info("import.jsonld.unavailable_using_html_fallback url=%s", url)
-    return _extract_recipe_from_html_fallback(url, body)
+    return _extract_recipe_from_html_fallback(url, body, flow_id=flow_id)
 
 
 def _extract_json_from_text(text: str) -> dict[str, Any]:
@@ -1585,143 +1605,246 @@ def create_app(config: Config | None = None) -> FastAPI:
     async def get_recipe_import_preview(request: Request, data: RecipeImportPayload) -> dict[str, Any]:
         user = _require_user(request)
         db = _db_for_user(user.username)
+        flow_id = uuid4().hex[:12]
         runtime_health = _claude_runtime_healthcheck(run_probe=False)
-        logger.info(
-            "import.preview.start user=%s has_url=%s has_text=%s ai_ready_basic=%s",
-            user.username,
-            bool(data.url),
-            bool(data.text),
-            runtime_health.get("ready_basic"),
-        )
         warnings: list[str] = []
         if not runtime_health.get("ready_basic"):
             warnings.append(
                 "AI processing is not fully available on server; import used deterministic fallback where needed."
             )
         existing_name_en = {ingredient.name_en for ingredient in db.get_all_ingredients() if ingredient.name_en}
+        _log_import_flow(
+            flow_id,
+            "start",
+            user=user.username,
+            has_url=bool(data.url),
+            has_text=bool(data.text),
+            ai_ready_basic=runtime_health.get("ready_basic"),
+            existing_ingredient_count=len(existing_name_en),
+        )
         if data.url:
             source_url = data.url.strip()
-            logger.info("import.preview.url.start user=%s url=%s", user.username, source_url)
-            parsed = urlparse(source_url)
-            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-                logger.warning("import.preview.url.invalid user=%s url=%s", user.username, source_url)
-                raise HTTPException(status_code=400, detail="Invalid URL")
+            stage = "url_received"
+            selected_tier = "none"
+            _log_import_flow(flow_id, "url_input_received", url=source_url)
+            try:
+                stage = "url_validation"
+                parsed = urlparse(source_url)
+                if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                    _log_import_flow(flow_id, "url_invalid", url=source_url)
+                    raise HTTPException(status_code=400, detail="Invalid URL")
 
-            extracted = _extract_recipe_from_url(source_url)
-            if extracted:
-                extracted["ingredients"] = _post_process_import_ingredients(
-                    extracted.get("ingredients", []),
-                    existing_names=existing_name_en,
-                )
-                warnings.append("AI extraction was skipped because structured recipe data was found directly on the URL.")
-                extracted["warnings"] = warnings
-                extracted["ai_status"] = runtime_health
-                logger.info(
-                    "import.preview.url.extracted user=%s title=%s steps=%d ingredients=%d warnings=%d",
-                    user.username,
-                    extracted.get("title"),
-                    len(extracted.get("steps") or []),
-                    len(extracted.get("ingredients") or []),
-                    len(warnings),
-                )
-                return extracted
+                stage = "deterministic_extract"
+                selected_tier = "structured"
+                _log_import_flow(flow_id, "tier_attempt", tier=selected_tier, stage=stage, url=source_url)
+                extracted = _extract_recipe_from_url(source_url, flow_id=flow_id)
+                if extracted:
+                    stage = "structured_postprocess"
+                    pre_count = len(extracted.get("ingredients") or [])
+                    extracted["ingredients"] = _post_process_import_ingredients(
+                        extracted.get("ingredients", []),
+                        existing_names=existing_name_en,
+                    )
+                    post_count = len(extracted.get("ingredients") or [])
+                    _log_import_flow(
+                        flow_id,
+                        "postprocess_complete",
+                        tier=selected_tier,
+                        stage=stage,
+                        ingredients_before=pre_count,
+                        ingredients_after=post_count,
+                    )
+                    warnings.append("AI extraction was skipped because structured recipe data was found directly on the URL.")
+                    extracted["warnings"] = warnings
+                    extracted["ai_status"] = runtime_health
+                    _log_import_flow(
+                        flow_id,
+                        "completed",
+                        tier=selected_tier,
+                        stage="return_preview",
+                        title=extracted.get("title"),
+                        steps=len(extracted.get("steps") or []),
+                        ingredients=post_count,
+                        warnings=len(warnings),
+                    )
+                    return extracted
 
-            prompt = (
-                "Extract the recipe from this URL and return only valid JSON with keys: "
-                "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
-                "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
-                "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
-                f"URL: {source_url}"
-            )
-            text_for_ai = _extract_recipe_text_from_url(source_url)
-            if text_for_ai:
-                logger.info("import.preview.url.using_text_for_ai user=%s chars=%d", user.username, len(text_for_ai))
+                _log_import_flow(flow_id, "deterministic_extract_miss", tier=selected_tier, stage=stage)
                 prompt = (
-                    "Extract a structured recipe from this page text and return only valid JSON with keys: "
+                    "Extract the recipe from this URL and return only valid JSON with keys: "
                     "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
                     "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
-                    "Use source_url exactly as provided. "
-                    "If one language is unavailable, set both name_en and name_es to the best available ingredient name.\n"
-                    f"SOURCE_URL: {source_url}\n"
-                    "PAGE TEXT:\n"
-                    f"{text_for_ai}"
+                    "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
+                    f"URL: {source_url}"
                 )
-                try:
-                    result = _run_claude_recipe_import(prompt, allow_web_fetch=False)
-                except HTTPException as exc:
-                    logger.warning(
-                        "import.preview.url.text_claude_failed user=%s status=%d detail=%s",
-                        user.username,
-                        exc.status_code,
-                        exc.detail,
+                stage = "url_text_extract"
+                _log_import_flow(flow_id, "url_text_extract_attempt", stage=stage)
+                text_for_ai = _extract_recipe_text_from_url(source_url, flow_id=flow_id)
+                if text_for_ai:
+                    selected_tier = "url_text_for_ai"
+                    _log_import_flow(
+                        flow_id,
+                        "url_text_extract_found",
+                        stage=stage,
+                        chars=len(text_for_ai),
                     )
-                    if (
-                        exc.status_code in {422, 502, 504}
-                        and not runtime_health.get("ready_basic")
-                    ):
-                        raise HTTPException(
-                            status_code=502,
-                            detail=(
-                                "Could not extract recipe from URL. Structured parsing failed and "
-                                "AI fallback is not ready on server. Check /api/import/health."
-                            ),
-                        ) from exc
-                    # last resort: web fetch mode
-                    result = _run_claude_recipe_import(
-                        (
-                            "Extract the recipe from this URL and return only valid JSON with keys: "
-                            "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
-                            "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
-                            "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
-                            f"URL: {source_url}"
-                        ),
-                        allow_web_fetch=True,
+                    prompt = (
+                        "Extract a structured recipe from this page text and return only valid JSON with keys: "
+                        "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
+                        "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
+                        "Use source_url exactly as provided. "
+                        "If one language is unavailable, set both name_en and name_es to the best available ingredient name.\n"
+                        f"SOURCE_URL: {source_url}\n"
+                        "PAGE TEXT:\n"
+                        f"{text_for_ai}"
                     )
-            else:
-                try:
-                    result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
-                except HTTPException as exc:
-                    logger.warning(
-                        "import.preview.url.claude_failed user=%s status=%d detail=%s",
-                        user.username,
-                        exc.status_code,
-                        exc.detail,
+                    stage = "claude_text_call"
+                    _log_import_flow(
+                        flow_id,
+                        "tier_attempt",
+                        tier=selected_tier,
+                        stage=stage,
+                        web_fetch=False,
+                        prompt_chars=len(prompt),
                     )
-                    if (
-                        exc.status_code in {422, 502, 504}
-                        and not runtime_health.get("ready_basic")
-                    ):
-                        raise HTTPException(
-                            status_code=502,
-                            detail=(
-                                "Could not extract recipe from URL. Structured parsing failed and "
-                                "AI fallback is not ready on server. Check /api/import/health."
-                            ),
-                        ) from exc
-                    raise
-            result["ingredients"] = _post_process_import_ingredients(
-                result.get("ingredients", []),
-                existing_names=existing_name_en,
-            )
-            if not result.get("ingredients"):
-                logger.warning("import.preview.url.no_ingredients_after_postprocess user=%s", user.username)
-                raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
-            result["warnings"] = warnings
-            result["ai_status"] = runtime_health
-            logger.info(
-                "import.preview.url.success user=%s title=%s steps=%d ingredients=%d warnings=%d",
-                user.username,
-                result.get("title"),
-                len(result.get("steps") or []),
-                len(result.get("ingredients") or []),
-                len(warnings),
-            )
-            return result
+                    try:
+                        result = _run_claude_recipe_import(prompt, allow_web_fetch=False)
+                    except HTTPException as exc:
+                        _log_import_flow(
+                            flow_id,
+                            "tier_failed",
+                            tier=selected_tier,
+                            stage=stage,
+                            status_code=exc.status_code,
+                            detail=str(exc.detail),
+                        )
+                        if exc.status_code in {422, 502, 504} and not runtime_health.get("ready_basic"):
+                            stage = "ai_runtime_unavailable"
+                            _log_import_flow(
+                                flow_id,
+                                "failed",
+                                tier=selected_tier,
+                                stage=stage,
+                                status_code=502,
+                                detail="AI fallback unavailable",
+                            )
+                            raise HTTPException(
+                                status_code=502,
+                                detail=(
+                                    "Could not extract recipe from URL. Structured parsing failed and "
+                                    "AI fallback is not ready on server. Check /api/import/health."
+                                ),
+                            ) from exc
+                        selected_tier = "webfetch_ai"
+                        stage = "claude_webfetch_fallback_call"
+                        _log_import_flow(
+                            flow_id,
+                            "tier_attempt",
+                            tier=selected_tier,
+                            stage=stage,
+                            web_fetch=True,
+                            prompt_chars=len(prompt),
+                            fallback_from="url_text_for_ai",
+                        )
+                        result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
+                else:
+                    selected_tier = "webfetch_ai"
+                    _log_import_flow(flow_id, "url_text_extract_empty", stage=stage)
+                    stage = "claude_url_webfetch_call"
+                    _log_import_flow(
+                        flow_id,
+                        "tier_attempt",
+                        tier=selected_tier,
+                        stage=stage,
+                        web_fetch=True,
+                        prompt_chars=len(prompt),
+                    )
+                    try:
+                        result = _run_claude_recipe_import(prompt, allow_web_fetch=True)
+                    except HTTPException as exc:
+                        _log_import_flow(
+                            flow_id,
+                            "tier_failed",
+                            tier=selected_tier,
+                            stage=stage,
+                            status_code=exc.status_code,
+                            detail=str(exc.detail),
+                        )
+                        if exc.status_code in {422, 502, 504} and not runtime_health.get("ready_basic"):
+                            raise HTTPException(
+                                status_code=502,
+                                detail=(
+                                    "Could not extract recipe from URL. Structured parsing failed and "
+                                    "AI fallback is not ready on server. Check /api/import/health."
+                                ),
+                            ) from exc
+                        raise
+
+                stage = "ai_result_postprocess"
+                pre_count = len(result.get("ingredients") or [])
+                result["ingredients"] = _post_process_import_ingredients(
+                    result.get("ingredients", []),
+                    existing_names=existing_name_en,
+                )
+                post_count = len(result.get("ingredients") or [])
+                _log_import_flow(
+                    flow_id,
+                    "postprocess_complete",
+                    tier=selected_tier,
+                    stage=stage,
+                    ingredients_before=pre_count,
+                    ingredients_after=post_count,
+                )
+                if not result.get("ingredients"):
+                    stage = "postprocess_validation"
+                    _log_import_flow(
+                        flow_id,
+                        "failed",
+                        tier=selected_tier,
+                        stage=stage,
+                        status_code=422,
+                        detail="Imported recipe has no valid ingredients",
+                    )
+                    raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
+                result["warnings"] = warnings
+                result["ai_status"] = runtime_health
+                _log_import_flow(
+                    flow_id,
+                    "completed",
+                    tier=selected_tier,
+                    stage="return_preview",
+                    title=result.get("title"),
+                    steps=len(result.get("steps") or []),
+                    ingredients=post_count,
+                    warnings=len(warnings),
+                )
+                return result
+            except HTTPException as exc:
+                logger.warning(
+                    "import.preview.url.failed flow_id=%s user=%s stage=%s tier=%s status=%d detail=%s",
+                    flow_id,
+                    user.username,
+                    stage,
+                    selected_tier,
+                    exc.status_code,
+                    str(exc.detail),
+                )
+                raise
+            except Exception as exc:
+                logger.exception(
+                    "import.preview.url.failed_unexpected flow_id=%s user=%s stage=%s tier=%s error=%s",
+                    flow_id,
+                    user.username,
+                    stage,
+                    selected_tier,
+                    str(exc),
+                )
+                raise
 
         source_text = (data.text or "").strip()
-        logger.info("import.preview.text.start user=%s chars=%d", user.username, len(source_text))
+        _log_import_flow(flow_id, "text_input_received", chars=len(source_text))
         if len(source_text) > 30000:
-            logger.warning("import.preview.text.too_long user=%s chars=%d", user.username, len(source_text))
+            _log_import_flow(flow_id, "text_input_too_long", chars=len(source_text), status_code=400)
             raise HTTPException(status_code=400, detail="Recipe text is too long (max 30000 characters)")
 
         prompt = (
@@ -1733,25 +1856,73 @@ def create_app(config: Config | None = None) -> FastAPI:
             "RECIPE TEXT:\n"
             f"{source_text}"
         )
-        result = _run_claude_recipe_import(prompt, allow_web_fetch=False)
-        result["ingredients"] = _post_process_import_ingredients(
-            result.get("ingredients", []),
-            existing_names=existing_name_en,
-        )
-        if not result.get("ingredients"):
-            logger.warning("import.preview.text.no_ingredients_after_postprocess user=%s", user.username)
-            raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
-        result["warnings"] = warnings
-        result["ai_status"] = runtime_health
-        logger.info(
-            "import.preview.text.success user=%s title=%s steps=%d ingredients=%d warnings=%d",
-            user.username,
-            result.get("title"),
-            len(result.get("steps") or []),
-            len(result.get("ingredients") or []),
-            len(warnings),
-        )
-        return result
+        stage = "text_claude_call"
+        try:
+            _log_import_flow(
+                flow_id,
+                "tier_attempt",
+                tier="text_input_ai",
+                stage=stage,
+                web_fetch=False,
+                prompt_chars=len(prompt),
+            )
+            result = _run_claude_recipe_import(prompt, allow_web_fetch=False)
+            pre_count = len(result.get("ingredients") or [])
+            result["ingredients"] = _post_process_import_ingredients(
+                result.get("ingredients", []),
+                existing_names=existing_name_en,
+            )
+            post_count = len(result.get("ingredients") or [])
+            _log_import_flow(
+                flow_id,
+                "postprocess_complete",
+                tier="text_input_ai",
+                stage="text_result_postprocess",
+                ingredients_before=pre_count,
+                ingredients_after=post_count,
+            )
+            if not result.get("ingredients"):
+                _log_import_flow(
+                    flow_id,
+                    "failed",
+                    tier="text_input_ai",
+                    stage="postprocess_validation",
+                    status_code=422,
+                    detail="Imported recipe has no valid ingredients",
+                )
+                raise HTTPException(status_code=422, detail="Imported recipe has no valid ingredients")
+            result["warnings"] = warnings
+            result["ai_status"] = runtime_health
+            _log_import_flow(
+                flow_id,
+                "completed",
+                tier="text_input_ai",
+                stage="return_preview",
+                title=result.get("title"),
+                steps=len(result.get("steps") or []),
+                ingredients=len(result.get("ingredients") or []),
+                warnings=len(warnings),
+            )
+            return result
+        except HTTPException as exc:
+            logger.warning(
+                "import.preview.text.failed flow_id=%s user=%s stage=%s status=%d detail=%s",
+                flow_id,
+                user.username,
+                stage,
+                exc.status_code,
+                str(exc.detail),
+            )
+            raise
+        except Exception as exc:
+            logger.exception(
+                "import.preview.text.failed_unexpected flow_id=%s user=%s stage=%s error=%s",
+                flow_id,
+                user.username,
+                stage,
+                str(exc),
+            )
+            raise
 
     @app.get("/api/import/health")
     async def get_import_health(request: Request, probe: bool = False) -> dict[str, Any]:
