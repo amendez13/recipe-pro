@@ -85,18 +85,73 @@ def _log_import_flow(flow_id: str, event: str, **details: Any) -> None:
     logger.info("import.flow flow_id=%s event=%s details=%s", flow_id, event, serialized)
 
 
-def _save_import_debug_snapshot(flow_id: str, source_url: str, page_text: str, prompt: str) -> dict[str, str]:
+def _import_debug_snapshots_enabled() -> bool:
+    return os.getenv("RECIPE_PRO_IMPORT_DEBUG_SNAPSHOTS", "0").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _import_debug_retention_seconds() -> int:
+    raw = os.getenv("RECIPE_PRO_IMPORT_DEBUG_RETENTION_SECONDS", "86400").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return 86400
+    return max(value, 0)
+
+
+def _prune_import_debug_snapshots(base_dir: Path, retention_seconds: int) -> int:
+    if retention_seconds <= 0:
+        return 0
+    cutoff = time.time() - retention_seconds
+    removed = 0
+    allowed_suffixes = (".page_text.txt", ".prompt.txt", ".meta.json")
+    for path in base_dir.iterdir():
+        if not path.is_file():
+            continue
+        if not path.name.endswith(allowed_suffixes):
+            continue
+        try:
+            if path.stat().st_mtime < cutoff:
+                path.unlink()
+                removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def _write_private_text_file(path: Path, content: str) -> None:
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(content)
+
+
+def _save_import_debug_snapshot(flow_id: str, source_url: str, page_text: str, prompt: str) -> Optional[dict[str, Any]]:
+    if not _import_debug_snapshots_enabled():
+        return None
     base_dir = Path(os.getenv("RECIPE_PRO_IMPORT_DEBUG_DIR", "/tmp/recipe-pro-import-debug"))
+    retention_seconds = _import_debug_retention_seconds()
     timestamp = int(time.time())
     stem = f"{timestamp}_{flow_id}"
     text_path = base_dir / f"{stem}.page_text.txt"
     prompt_path = base_dir / f"{stem}.prompt.txt"
     meta_path = base_dir / f"{stem}.meta.json"
 
-    base_dir.mkdir(parents=True, exist_ok=True)
-    text_path.write_text(page_text, encoding="utf-8")
-    prompt_path.write_text(prompt, encoding="utf-8")
-    meta_path.write_text(
+    base_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    try:
+        os.chmod(base_dir, 0o700)
+    except OSError:
+        # Continue even if chmod is blocked by platform or mount options.
+        pass
+    pruned_files = _prune_import_debug_snapshots(base_dir, retention_seconds)
+
+    _write_private_text_file(text_path, page_text)
+    _write_private_text_file(prompt_path, prompt)
+    _write_private_text_file(
+        meta_path,
         json.dumps(
             {
                 "flow_id": flow_id,
@@ -109,12 +164,13 @@ def _save_import_debug_snapshot(flow_id: str, source_url: str, page_text: str, p
             sort_keys=True,
             indent=2,
         ),
-        encoding="utf-8",
     )
     return {
         "text_path": str(text_path),
         "prompt_path": str(prompt_path),
         "meta_path": str(meta_path),
+        "pruned_files": pruned_files,
+        "retention_seconds": retention_seconds,
     }
 
 
@@ -1720,13 +1776,20 @@ def create_app(config: Config | None = None) -> FastAPI:
                     prompt = _build_url_text_import_prompt(source_url, text_for_ai)
                     try:
                         snapshot = _save_import_debug_snapshot(flow_id, source_url, text_for_ai, prompt)
-                        _log_import_flow(
-                            flow_id,
-                            "url_text_snapshot_saved",
-                            **snapshot,
-                            text_chars=len(text_for_ai),
-                            prompt_chars=len(prompt),
-                        )
+                        if snapshot:
+                            _log_import_flow(
+                                flow_id,
+                                "url_text_snapshot_saved",
+                                **snapshot,
+                                text_chars=len(text_for_ai),
+                                prompt_chars=len(prompt),
+                            )
+                        else:
+                            _log_import_flow(
+                                flow_id,
+                                "url_text_snapshot_skipped",
+                                reason="disabled",
+                            )
                     except OSError as exc:
                         _log_import_flow(
                             flow_id,
