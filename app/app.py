@@ -706,44 +706,6 @@ def _extract_list_items_from_chunk(chunk: str) -> list[str]:
     return [item for item in items if item]
 
 
-def _extract_candidate_ingredient_lines_from_text(text: str) -> list[str]:
-    lowered = text.lower()
-    ingredient_markers = ["ingredientes", "ingredients"]
-    step_markers = [
-        "cómo preparar",
-        "como preparar",
-        "elaboración",
-        "elaboracion",
-        "preparación",
-        "preparacion",
-        "instructions",
-        "method",
-        "pasos",
-    ]
-
-    start = min((lowered.find(marker) for marker in ingredient_markers if lowered.find(marker) != -1), default=-1)
-    if start == -1:
-        return []
-    end_candidates = [lowered.find(marker, start + 1) for marker in step_markers if lowered.find(marker, start + 1) != -1]
-    end = min(end_candidates) if end_candidates else min(len(text), start + 1800)
-    section = text[start:end].strip()
-    section = re.sub(r"(?is)^.*?\bingredientes(?:\s+para\s+\d+\s+personas)?\b", "", section, count=1).strip()
-    if not section:
-        return []
-
-    starts = [m.start() for m in re.finditer(r"(?<!\w)\d+(?:[.,]\d+)?\s+\S+", section)]
-    if not starts:
-        return []
-
-    lines: list[str] = []
-    for idx, begin in enumerate(starts):
-        finish = starts[idx + 1] if idx + 1 < len(starts) else len(section)
-        candidate = re.sub(r"\s+", " ", section[begin:finish]).strip(" \n\t\r,.;:")
-        if len(candidate) >= 4:
-            lines.append(candidate)
-    return lines[:40]
-
-
 def _extract_recipe_from_html_fallback(url: str, body: str, flow_id: Optional[str] = None) -> Optional[dict[str, Any]]:
     log_flow_id = flow_id or "-"
     lowered = body.lower()
@@ -892,37 +854,13 @@ def _extract_recipe_text_from_url(url: str, flow_id: Optional[str] = None) -> Op
     cleaned = re.sub(r"(?is)<script[^>]*>.*?</script>", " ", body)
     cleaned = re.sub(r"(?is)<style[^>]*>.*?</style>", " ", cleaned)
     cleaned = re.sub(r"(?is)<!--.*?-->", " ", cleaned)
-    lowered = cleaned.lower()
-
-    ingredient_markers = ["ingredientes", "ingredients"]
-    step_markers = ["elaboración", "elaboracion", "preparación", "preparacion", "instructions", "method", "pasos"]
-
-    ingredient_idx = min((lowered.find(marker) for marker in ingredient_markers if lowered.find(marker) != -1), default=-1)
-    step_idx = min((lowered.find(marker) for marker in step_markers if lowered.find(marker) != -1), default=-1)
-
-    if ingredient_idx != -1 and step_idx != -1:
-        start = min(ingredient_idx, step_idx)
-        end = max(ingredient_idx, step_idx) + 22000
-        focus_chunk = cleaned[start:end]
-    elif ingredient_idx != -1:
-        focus_chunk = cleaned[ingredient_idx : ingredient_idx + 26000]
-    elif step_idx != -1:
-        focus_chunk = cleaned[step_idx : step_idx + 26000]
-    else:
-        # Fallback to article/main-ish content.
-        main_match = re.search(
-            r"(?is)<(?:main|article|section)[^>]*>(.*?)</(?:main|article|section)>",
-            cleaned,
-        )
-        focus_chunk = main_match.group(1) if main_match else cleaned
-
-    text = _strip_html_text(focus_chunk)
+    text = _strip_html_text(cleaned)
     if not text:
         return None
 
-    # Keep prompt context bounded for model reliability.
-    if len(text) > 24000:
-        text = text[:24000]
+    # Keep prompt context bounded while still passing broad page context.
+    if len(text) > 50000:
+        text = text[:50000]
     logger.info("import.url_text_extract.ok flow_id=%s url=%s chars=%d", log_flow_id, url, len(text))
     return text
 
@@ -1760,28 +1698,19 @@ def create_app(config: Config | None = None) -> FastAPI:
                         chars=len(text_for_ai),
                     )
                     prompt = (
-                        "Extract a structured recipe from this page text and return only valid JSON with keys: "
-                        "title, source_url, servings, prep_time, cook_time, steps (array of strings), "
-                        "ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
+                        "You are given full plain text extracted from a recipe webpage and it may include noise. "
+                        "First identify where ingredients and instructions are in the text, then extract the recipe. "
+                        "Return only valid JSON with keys: title, source_url, servings, prep_time, cook_time, "
+                        "steps (array of strings), ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
                         "Use source_url exactly as provided. "
-                        "If one language is unavailable, set both name_en and name_es to the best available ingredient name.\n"
+                        "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
+                        "If the text clearly contains ingredient lines, do not return an empty ingredients array. "
+                        "Split combined ingredient lines into separate ingredients when needed.\n"
                         f"SOURCE_URL: {source_url}\n"
-                        "PAGE TEXT:\n"
-                        f"{text_for_ai}"
+                        "PAGE_TEXT_BEGIN\n"
+                        f"{text_for_ai}\n"
+                        "PAGE_TEXT_END"
                     )
-                    candidate_lines = _extract_candidate_ingredient_lines_from_text(text_for_ai)
-                    if candidate_lines:
-                        prompt += (
-                            "\n\nCANDIDATE INGREDIENT LINES (best effort, may be noisy):\n- "
-                            + "\n- ".join(candidate_lines)
-                            + "\n\nWhen an ingredient line contains multiple items, split them into separate ingredients."
-                        )
-                        _log_import_flow(
-                            flow_id,
-                            "ingredient_candidates_extracted",
-                            count=len(candidate_lines),
-                            sample=candidate_lines[:3],
-                        )
                     try:
                         snapshot = _save_import_debug_snapshot(flow_id, source_url, text_for_ai, prompt)
                         _log_import_flow(
