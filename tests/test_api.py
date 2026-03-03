@@ -4,6 +4,7 @@ import pytest
 from app.app import (
     _complete_bilingual_name_with_ai,
     _enrich_ingredient_payload_names,
+    _extract_candidate_ingredient_lines_from_text,
     _extract_recipe_from_url,
     _normalize_import_recipe,
     _post_process_import_ingredients,
@@ -533,6 +534,73 @@ def test_recipe_import_preview_text_fallback_retries_with_web_fetch(client, monk
     assert len(calls) == 2
     assert calls[0]["allow_web_fetch"] is False
     assert calls[1]["allow_web_fetch"] is True
+
+
+def test_extract_candidate_ingredient_lines_from_flat_text_hogarmania_sample():
+    text = (
+        "ingredientes que todos tenemos en casa. Raciones 4 Ingredientes para 4 personas "
+        "250 gr. de pasta para sopa (pistón mediano) 300 gr. de garbanzos cocidos "
+        "1 rama de apio 1 cebolla pequeña 2 zanahorias 1 patata 4 cucharadas de tomate concentrado "
+        "aceite de oliva virgen extra sal 1 hoja de laurel 4 ramitas de tomillo fresco perejil "
+        "Cómo preparar pasta e ceci Corta la rama de apio."
+    )
+    lines = _extract_candidate_ingredient_lines_from_text(text)
+    assert len(lines) >= 8
+    assert any("250 gr. de pasta para sopa" in line for line in lines)
+    assert any("300 gr. de garbanzos cocidos" in line for line in lines)
+    assert any("1 hoja de laurel" in line for line in lines)
+
+
+def test_recipe_import_preview_uses_candidate_lines_in_prompt_for_flat_text(client, monkeypatch):
+    calls = []
+    flat_text = (
+        "ingredientes que todos tenemos en casa. Raciones 4 Ingredientes para 4 personas "
+        "250 gr. de pasta para sopa (pistón mediano) 300 gr. de garbanzos cocidos "
+        "1 rama de apio 1 cebolla pequeña 2 zanahorias 1 patata 4 cucharadas de tomate concentrado "
+        "aceite de oliva virgen extra sal 1 hoja de laurel 4 ramitas de tomillo fresco perejil "
+        "Cómo preparar pasta e ceci Corta la rama de apio."
+    )
+
+    def fake_run_claude(prompt: str, allow_web_fetch: bool = False):
+        calls.append({"prompt": prompt, "allow_web_fetch": allow_web_fetch})
+        return {
+            "title": "Pasta e Ceci",
+            "source_url": "https://www.hogarmania.com/cocina/recetas/pastas-pizzas/pasta-e-ceci.html",
+            "servings": 4,
+            "prep_time": 15,
+            "cook_time": 40,
+            "steps": ["Sofrie verduras", "Cuece con garbanzos y pasta"],
+            "ingredients": [
+                {
+                    "name": "pasta para sopa",
+                    "name_en": "soup pasta",
+                    "name_es": "pasta para sopa",
+                    "quantity": 250,
+                    "unit": "g",
+                    "category": "pantry",
+                    "notes": "",
+                }
+            ],
+        }
+
+    monkeypatch.setattr("app.app._extract_recipe_from_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.app._extract_recipe_text_from_url", lambda *_args, **_kwargs: flat_text)
+    monkeypatch.setattr("app.app._save_import_debug_snapshot", lambda *_args, **_kwargs: {})
+    monkeypatch.setattr("app.app._run_claude_recipe_import", fake_run_claude)
+
+    response = client.post(
+        "/api/recipes/import-preview",
+        json={"url": "https://www.hogarmania.com/cocina/recetas/pastas-pizzas/pasta-e-ceci.html"},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["title"] == "Pasta e Ceci"
+    assert body["ingredients"]
+    assert len(calls) == 1
+    assert calls[0]["allow_web_fetch"] is False
+    assert "CANDIDATE INGREDIENT LINES" in calls[0]["prompt"]
+    assert "250 gr. de pasta para sopa" in calls[0]["prompt"]
+    assert "300 gr. de garbanzos cocidos" in calls[0]["prompt"]
 
 
 def test_recipe_import_preview_normalizes_null_source_and_unit(client, monkeypatch):

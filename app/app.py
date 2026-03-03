@@ -706,6 +706,44 @@ def _extract_list_items_from_chunk(chunk: str) -> list[str]:
     return [item for item in items if item]
 
 
+def _extract_candidate_ingredient_lines_from_text(text: str) -> list[str]:
+    lowered = text.lower()
+    ingredient_markers = ["ingredientes", "ingredients"]
+    step_markers = [
+        "cómo preparar",
+        "como preparar",
+        "elaboración",
+        "elaboracion",
+        "preparación",
+        "preparacion",
+        "instructions",
+        "method",
+        "pasos",
+    ]
+
+    start = min((lowered.find(marker) for marker in ingredient_markers if lowered.find(marker) != -1), default=-1)
+    if start == -1:
+        return []
+    end_candidates = [lowered.find(marker, start + 1) for marker in step_markers if lowered.find(marker, start + 1) != -1]
+    end = min(end_candidates) if end_candidates else min(len(text), start + 1800)
+    section = text[start:end].strip()
+    section = re.sub(r"(?is)^.*?\bingredientes(?:\s+para\s+\d+\s+personas)?\b", "", section, count=1).strip()
+    if not section:
+        return []
+
+    starts = [m.start() for m in re.finditer(r"(?<!\w)\d+(?:[.,]\d+)?\s+\S+", section)]
+    if not starts:
+        return []
+
+    lines: list[str] = []
+    for idx, begin in enumerate(starts):
+        finish = starts[idx + 1] if idx + 1 < len(starts) else len(section)
+        candidate = re.sub(r"\s+", " ", section[begin:finish]).strip(" \n\t\r,.;:")
+        if len(candidate) >= 4:
+            lines.append(candidate)
+    return lines[:40]
+
+
 def _extract_recipe_from_html_fallback(url: str, body: str, flow_id: Optional[str] = None) -> Optional[dict[str, Any]]:
     log_flow_id = flow_id or "-"
     lowered = body.lower()
@@ -1731,6 +1769,19 @@ def create_app(config: Config | None = None) -> FastAPI:
                         "PAGE TEXT:\n"
                         f"{text_for_ai}"
                     )
+                    candidate_lines = _extract_candidate_ingredient_lines_from_text(text_for_ai)
+                    if candidate_lines:
+                        prompt += (
+                            "\n\nCANDIDATE INGREDIENT LINES (best effort, may be noisy):\n- "
+                            + "\n- ".join(candidate_lines)
+                            + "\n\nWhen an ingredient line contains multiple items, split them into separate ingredients."
+                        )
+                        _log_import_flow(
+                            flow_id,
+                            "ingredient_candidates_extracted",
+                            count=len(candidate_lines),
+                            sample=candidate_lines[:3],
+                        )
                     try:
                         snapshot = _save_import_debug_snapshot(flow_id, source_url, text_for_ai, prompt)
                         _log_import_flow(
