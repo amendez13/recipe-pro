@@ -1289,6 +1289,23 @@ def _run_claude_recipe_import(prompt: str, allow_web_fetch: bool = False) -> dic
     return normalized
 
 
+def _build_url_text_import_prompt(source_url: str, page_text: str) -> str:
+    return (
+        "You are given full plain text extracted from a recipe webpage and it may include noise. "
+        "First identify where ingredients and instructions are in the text, then extract the recipe. "
+        "Return only valid JSON with keys: title, source_url, servings, prep_time, cook_time, "
+        "steps (array of strings), ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
+        "Use source_url exactly as provided. "
+        "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
+        "If the text clearly contains ingredient lines, do not return an empty ingredients array. "
+        "Split combined ingredient lines into separate ingredients when needed.\n"
+        f"SOURCE_URL: {source_url}\n"
+        "PAGE_TEXT_BEGIN\n"
+        f"{page_text}\n"
+        "PAGE_TEXT_END"
+    )
+
+
 def create_app(config: Config | None = None) -> FastAPI:
     app = FastAPI(
         title="Recipe Pro",
@@ -1697,20 +1714,7 @@ def create_app(config: Config | None = None) -> FastAPI:
                         stage=stage,
                         chars=len(text_for_ai),
                     )
-                    prompt = (
-                        "You are given full plain text extracted from a recipe webpage and it may include noise. "
-                        "First identify where ingredients and instructions are in the text, then extract the recipe. "
-                        "Return only valid JSON with keys: title, source_url, servings, prep_time, cook_time, "
-                        "steps (array of strings), ingredients (array of objects with name_en, name_es, quantity, unit, category, notes). "
-                        "Use source_url exactly as provided. "
-                        "If one language is unavailable, set both name_en and name_es to the best available ingredient name. "
-                        "If the text clearly contains ingredient lines, do not return an empty ingredients array. "
-                        "Split combined ingredient lines into separate ingredients when needed.\n"
-                        f"SOURCE_URL: {source_url}\n"
-                        "PAGE_TEXT_BEGIN\n"
-                        f"{text_for_ai}\n"
-                        "PAGE_TEXT_END"
-                    )
+                    prompt = _build_url_text_import_prompt(source_url, text_for_ai)
                     try:
                         snapshot = _save_import_debug_snapshot(flow_id, source_url, text_for_ai, prompt)
                         _log_import_flow(
