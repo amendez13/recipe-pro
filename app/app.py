@@ -85,6 +85,39 @@ def _log_import_flow(flow_id: str, event: str, **details: Any) -> None:
     logger.info("import.flow flow_id=%s event=%s details=%s", flow_id, event, serialized)
 
 
+def _save_import_debug_snapshot(flow_id: str, source_url: str, page_text: str, prompt: str) -> dict[str, str]:
+    base_dir = Path(os.getenv("RECIPE_PRO_IMPORT_DEBUG_DIR", "/tmp/recipe-pro-import-debug"))
+    timestamp = int(time.time())
+    stem = f"{timestamp}_{flow_id}"
+    text_path = base_dir / f"{stem}.page_text.txt"
+    prompt_path = base_dir / f"{stem}.prompt.txt"
+    meta_path = base_dir / f"{stem}.meta.json"
+
+    base_dir.mkdir(parents=True, exist_ok=True)
+    text_path.write_text(page_text, encoding="utf-8")
+    prompt_path.write_text(prompt, encoding="utf-8")
+    meta_path.write_text(
+        json.dumps(
+            {
+                "flow_id": flow_id,
+                "source_url": source_url,
+                "text_chars": len(page_text),
+                "prompt_chars": len(prompt),
+                "saved_unix_ts": timestamp,
+            },
+            ensure_ascii=True,
+            sort_keys=True,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    return {
+        "text_path": str(text_path),
+        "prompt_path": str(prompt_path),
+        "meta_path": str(meta_path),
+    }
+
+
 class IngredientInput(BaseModel):
     name: Optional[str] = None
     name_en: Optional[str] = None
@@ -1698,6 +1731,21 @@ def create_app(config: Config | None = None) -> FastAPI:
                         "PAGE TEXT:\n"
                         f"{text_for_ai}"
                     )
+                    try:
+                        snapshot = _save_import_debug_snapshot(flow_id, source_url, text_for_ai, prompt)
+                        _log_import_flow(
+                            flow_id,
+                            "url_text_snapshot_saved",
+                            **snapshot,
+                            text_chars=len(text_for_ai),
+                            prompt_chars=len(prompt),
+                        )
+                    except OSError as exc:
+                        _log_import_flow(
+                            flow_id,
+                            "url_text_snapshot_failed",
+                            error=str(exc),
+                        )
                     stage = "claude_text_call"
                     _log_import_flow(
                         flow_id,
