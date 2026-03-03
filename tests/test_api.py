@@ -7,6 +7,7 @@ from app.app import (
     _extract_recipe_from_url,
     _normalize_import_recipe,
     _post_process_import_ingredients,
+    _run_claude_recipe_import,
     create_app,
 )
 from app.auth import hash_password
@@ -422,6 +423,25 @@ def test_recipe_import_preview_text_payload(client, monkeypatch):
     assert len(body["ingredients"]) == 1
 
 
+def test_run_claude_recipe_import_accepts_bilingual_only_ingredient_objects(monkeypatch):
+    class DummyResult:
+        stdout = """
+        {"type":"result","is_error":false,"structured_output":{"title":"Bilingual","source_url":"https://example.com/r","servings":2,"prep_time":10,"cook_time":20,"steps":["Mix"],"ingredients":[{"name_en":"cooked chickpeas","name_es":"garbanzos cocidos","quantity":300,"unit":"g","category":"legumes","notes":null}]}}
+        """
+
+    monkeypatch.setattr("app.app.subprocess.run", lambda *args, **kwargs: DummyResult())
+
+    result = _run_claude_recipe_import("ignored prompt", allow_web_fetch=False)
+    assert result["title"] == "Bilingual"
+    assert len(result["ingredients"]) == 1
+    ingredient = result["ingredients"][0]
+    assert ingredient["name"] == "cooked chickpeas"
+    assert ingredient["name_en"] == "cooked chickpeas"
+    assert ingredient["name_es"] == "garbanzos cocidos"
+    assert ingredient["quantity"] == 300.0
+    assert ingredient["unit"] == "g"
+
+
 def test_recipe_import_preview_rejects_missing_input(client):
     response = client.post("/api/recipes/import-preview", json={})
     assert response.status_code == 422
@@ -633,6 +653,49 @@ def test_normalize_import_recipe_parses_ranges_and_notes_consistently():
     assert flour["quantity"] == 1.5
     assert flour["unit"] == "cup"
     assert flour["notes"] == "sifted"
+
+
+def test_normalize_import_recipe_accepts_bilingual_only_ingredient_objects():
+    normalized = _normalize_import_recipe(
+        {
+            "title": "Bilingual Only",
+            "steps": ["Mix"],
+            "ingredients": [
+                {
+                    "name_en": "cooked chickpeas",
+                    "name_es": "garbanzos cocidos",
+                    "quantity": 300,
+                    "unit": "g",
+                    "category": "legumes",
+                    "notes": None,
+                },
+                {
+                    "name_en": "olive oil",
+                    "name_es": "aceite de oliva",
+                    "quantity": None,
+                    "unit": None,
+                    "category": None,
+                    "notes": None,
+                },
+            ],
+        }
+    )
+
+    assert len(normalized["ingredients"]) == 2
+
+    chickpeas = normalized["ingredients"][0]
+    assert chickpeas["name"] == "cooked chickpeas"
+    assert chickpeas["name_en"] == "cooked chickpeas"
+    assert chickpeas["name_es"] == "garbanzos cocidos"
+    assert chickpeas["quantity"] == 300.0
+    assert chickpeas["unit"] == "g"
+
+    oil = normalized["ingredients"][1]
+    assert oil["name"] == "olive oil"
+    assert oil["name_en"] == "olive oil"
+    assert oil["name_es"] == "aceite de oliva"
+    assert oil["quantity"] == 1.0
+    assert oil["unit"] == "nonunit"
 
 
 def test_post_process_import_ingredients_splits_compounds_and_cleans_units(monkeypatch):

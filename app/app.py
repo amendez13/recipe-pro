@@ -620,13 +620,14 @@ def _normalize_import_ingredient(item: Any) -> Optional[dict[str, Any]]:
 
     raw_name = str(item.get("name") or "").strip()
     raw_text = str(item.get("text") or "").strip()
-    source_text = raw_name or raw_text
+    explicit_name_en = str(item.get("name_en") or "").strip().lower()
+    explicit_name_es = str(item.get("name_es") or "").strip().lower()
+
+    source_text = raw_name or raw_text or explicit_name_en or explicit_name_es
     parsed = _parse_ingredient_line(source_text) if source_text else {}
     if not parsed:
         return None
 
-    explicit_name_en = str(item.get("name_en") or "").strip().lower()
-    explicit_name_es = str(item.get("name_es") or "").strip().lower()
     if explicit_name_en:
         parsed["name_en"] = explicit_name_en
     if explicit_name_es:
@@ -654,10 +655,12 @@ def _normalize_import_ingredient(item: Any) -> Optional[dict[str, Any]]:
     elif explicit_notes:
         parsed["notes"] = explicit_notes
 
+    if not parsed.get("name"):
+        parsed["name"] = parsed.get("name_en") or parsed.get("name_es") or source_text
     if not parsed.get("name_en"):
-        parsed["name_en"] = parsed.get("name")
+        parsed["name_en"] = parsed.get("name") or parsed.get("name_es") or source_text
     if not parsed.get("name_es"):
-        parsed["name_es"] = parsed.get("name_en") or parsed.get("name")
+        parsed["name_es"] = parsed.get("name_en") or parsed.get("name") or source_text
 
     return parsed if parsed.get("name") else None
 
