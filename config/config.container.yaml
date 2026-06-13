@@ -1,0 +1,23 @@
+# Container config (automation issue #351). Read via `app.main -c`. The DBs
+# live on the bind-mounted /data volume; auth secrets come from the environment
+# (app/config.py substitutes ${VAR}). The container binds 0.0.0.0; the host
+# `docker run -p {tailscale_ip}:8084:8084` keeps it Tailscale-only externally.
+web:
+  host: "0.0.0.0"
+  port: 8084
+
+database:
+  path: "/data/ideas.db"
+
+auth:
+  session_secret: "${RECIPE_PRO_SESSION_SECRET}"
+  session_cookie_name: "recipe_pro_session"
+  session_max_age_seconds: 2592000
+  session_secure: false
+  users:
+    - username: "alex"
+      password_hash: "${RECIPE_PRO_USER_ALEX_PASSWORD_HASH}"
+      db_path: "/data/alex.db"
+    - username: "kris"
+      password_hash: "${RECIPE_PRO_USER_KRIS_PASSWORD_HASH}"
+      db_path: "/data/kris.db"
