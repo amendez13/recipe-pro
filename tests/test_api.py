@@ -1,3 +1,4 @@
+import json
 from fastapi.testclient import TestClient
 import pytest
 
@@ -456,15 +457,25 @@ def test_recipe_import_preview_rejects_both_inputs(client):
 
 
 def test_recipe_import_preview_parses_fenced_json(client, monkeypatch):
+    recipe = {
+        "title": "Fenced Recipe",
+        "servings": 4,
+        "prep_time": 15,
+        "cook_time": 45,
+        "steps": ["Prep", "Bake"],
+        "ingredients": [
+            {"name": "Noodles", "quantity": 12, "unit": "oz", "category": "pantry", "notes": ""}
+        ],
+    }
+
     class DummyResult:
-        stdout = """
-        {"type":"result","is_error":false,"result":"```json\n{\n  \\"title\\": \\"Fenced Recipe\\",\n  \\"servings\\": 4,\n  \\"prep_time\\": 15,\n  \\"cook_time\\": 45,\n  \\"steps\\": [\\"Prep\\", \\"Bake\\"],\n  \\"ingredients\\": [{\\"name\\": \\"Noodles\\", \\"quantity\\": 12, \\"unit\\": \\"oz\\", \\"category\\": \\"pantry\\", \\"notes\\": \\"\\"}]\n}\n```"}
-        """
+        stdout = json.dumps({"type": "result", "is_error": False, "result": "```json\n" + json.dumps(recipe) + "\n```"})
 
     def fake_run(*args, **kwargs):
         return DummyResult()
 
     monkeypatch.setattr("app.app._extract_recipe_from_url", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.app._extract_recipe_text_from_url", lambda *_args, **_kwargs: "")
     monkeypatch.setattr("app.app.subprocess.run", fake_run)
 
     response = client.post("/api/recipes/import-preview", json={"url": "https://example.com/fenced"})
@@ -510,7 +521,7 @@ def test_recipe_import_preview_uses_extracted_text_before_web_fetch(client, monk
     assert body["title"] == "From Extracted Text"
     assert len(calls) == 1
     assert calls[0]["allow_web_fetch"] is False
-    assert "PAGE TEXT" in calls[0]["prompt"]
+    assert "PAGE_TEXT_BEGIN\nIngredientes: sal\nPAGE_TEXT_END" in calls[0]["prompt"]
 
 
 def test_recipe_import_preview_text_fallback_retries_with_web_fetch(client, monkeypatch):
@@ -621,7 +632,15 @@ def test_recipe_import_preview_normalizes_null_source_and_unit(client, monkeypat
     monkeypatch.setattr("app.app.subprocess.run", fake_run)
 
     response = client.post("/api/recipes/import-preview", json={"text": "eggs recipe"})
-    assert response.status_code == 422
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source_url"] is None
+    ingredient = body["ingredients"][0]
+    assert ingredient["name"] == "eggs"
+    assert ingredient["quantity"] == 2
+    assert ingredient["unit"] == "nonunit"
+    assert ingredient["category"] is None
+    assert ingredient["notes"] is None
 
 
 def test_normalize_import_recipe_parses_ranges_and_notes_consistently():

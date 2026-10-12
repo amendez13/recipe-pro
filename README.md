@@ -134,8 +134,13 @@ Language preference is stored per logged-in user in browser local storage.
 
 ```bash
 source .venv/bin/activate
-pytest -q
+RECIPE_PRO_SESSION_SECRET=synthetic-local-test-session pytest -q
 ```
+
+The suite mocks Claude responses and blocks live Claude subprocess calls, so it
+requires no paid model calls. Import regression cases cover both incomplete
+responses and complete normalized recipes. The session value above is only for
+local test initialization.
 
 ## Architecture Docs
 
@@ -162,3 +167,26 @@ Multi-user rollout checklist:
 2. Generate and set password hashes (never store plaintext passwords).
 3. Set `auth.session_secret` to a strong random value.
 4. Restart service and verify login + user isolation behavior.
+
+## Secret Scanning (gitleaks)
+
+`.github/workflows/gitleaks.yml` runs the standardized `Secret Scanning` job on
+`[self-hosted, fargate]`. It downloads gitleaks 8.30.1 and verifies the pinned
+Linux x64 archive SHA-256 before execution.
+
+Pull requests scan `base.sha..head.sha`. Pushes and manual runs scan the event
+commit's full reachable history. Both include first-parent merge patches;
+sibling branch refs are outside the scan scope. The job validates the revisions
+and complete Git traversal, then fails on scanner errors even if gitleaks
+returns zero.
+
+Reports use `--redact=100`. The job uploads redacted SARIF as an artifact and
+attempts GitHub code scanning ingestion when supported. Findings fail the job;
+real credentials require approved remediation. Any false-positive exclusion
+must be verified, justified in its PR, and restricted to an exact fingerprint.
+
+This workflow is byte-identical to the reviewed template in
+[automation#1020](https://github.com/amendez13/automation/pull/1020), delivered
+under [automation#376](https://github.com/amendez13/automation/issues/376).
+After merge, confirm a green Secret Scanning run on main. Roll back through a
+reviewed revert PR if needed.
